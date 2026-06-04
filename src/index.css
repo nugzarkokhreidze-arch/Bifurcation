@@ -1,0 +1,33 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+Georgian:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Noto Sans Georgian", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  font-family: var(--font-sans);
+  background:
+    radial-gradient(circle at top right, #ffe8d6 0%, transparent 34%),
+    radial-gradient(circle at top left, #ece6ff 0%, transparent 36%),
+    linear-gradient(135deg, #fffaf3 0%, #f7f3ff 48%, #eef8ff 100%);
+  background-attachment: fixed;
+  color: #1e1b35;
+}
+
+/* Custom scrollbars for a premium bright app feel */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(247, 243, 255, 0.5);
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}

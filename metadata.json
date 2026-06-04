@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Remix: Remix: Remix: Remix: Remix: ბიფურკაცია",
+  "description": "თამაში, რომელიც გვეხმარება კომპლექსებისა და სოციალური შიშების დაძლევაში, პიროვნულ განვითარებასა და თავდაჯერების ზრდაში — უსაფრთხო, შემოქმედებითი და სახალისო აქტივობების მეშვეობით.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
