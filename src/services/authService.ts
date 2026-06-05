@@ -1,188 +1,418 @@
-import { User } from "../types";
-import { storageService, storageKeys } from "./storageService";
+import { User } from '../types';
+import { supabase } from './supabaseClient';
+import { storageKeys, storageService } from './storageService';
+
+type RegisterPlayerInput = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  nickname: string;
+  passwordHash: string;
+  avatar: string;
+  fictionalNameEnabled: boolean;
+  consentAccepted: boolean;
+  preferredLanguage?: 'ka' | 'en';
+};
+
+function createFallbackAvatar(nickname: string) {
+  return `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(nickname)}`;
+}
+
+function mapPlayerRowToUser(row: any): User {
+  return {
+    id: row.id,
+    firstName: row.first_name || '',
+    lastName: row.last_name || '',
+    email: row.email || '',
+    phone: row.phone || '',
+    nickname: row.nickname || 'მოთამაშე',
+    points: row.points ?? 100,
+    avatar: row.avatar || createFallbackAvatar(row.nickname || row.email || 'player'),
+    fictionalNameEnabled: row.fictional_name_enabled ?? true,
+    status: row.status || 'active',
+    consentAccepted: row.consent_accepted ?? false,
+    consentDate: row.consent_date || undefined,
+    completedChallenges: row.completed_challenges || [],
+    hiddenChallenges: row.hidden_challenges || [],
+    publicChallenges: row.public_challenges || [],
+    skippedChallenges: row.skipped_challenges || [],
+    votesReceived: row.votes_received ?? 0,
+    braveryBonuses: row.bravery_bonuses ?? 0,
+    coachQuestionsRemaining: row.coach_questions_remaining ?? 3,
+    videoCallAvailable: row.video_call_available ?? true,
+    banned: row.banned ?? false,
+    banReason: row.ban_reason || undefined,
+    isAdmin: row.is_admin ?? false,
+    badges: row.badges || [],
+    achievements: row.achievements || [],
+    streakCount: row.streak_count ?? 1,
+    lastActiveDate: row.last_active_date || undefined,
+    preferredLanguage: row.preferred_language || 'ka',
+    notifications: row.notifications || [],
+    createdAt: row.created_at || undefined,
+    updatedAt: row.updated_at || undefined,
+  };
+}
+
+function mapUserToPlayerRow(user: User) {
+  return {
+    id: user.id,
+    first_name: user.firstName,
+    last_name: user.lastName,
+    email: user.email,
+    phone: user.phone,
+    nickname: user.nickname,
+    points: user.points,
+    avatar: user.avatar,
+    fictional_name_enabled: user.fictionalNameEnabled,
+    status: user.status || 'active',
+    consent_accepted: user.consentAccepted,
+    consent_date: user.consentDate || new Date().toISOString(),
+    completed_challenges: user.completedChallenges || [],
+    hidden_challenges: user.hiddenChallenges || [],
+    public_challenges: user.publicChallenges || [],
+    skipped_challenges: user.skippedChallenges || [],
+    votes_received: user.votesReceived || 0,
+    bravery_bonuses: user.braveryBonuses || 0,
+    coach_questions_remaining: user.coachQuestionsRemaining ?? 3,
+    video_call_available: user.videoCallAvailable ?? true,
+    banned: user.banned ?? false,
+    ban_reason: user.banReason || '',
+    is_admin: user.isAdmin ?? false,
+    badges: user.badges || [],
+    achievements: user.achievements || [],
+    streak_count: user.streakCount || 1,
+    last_active_date: user.lastActiveDate || new Date().toISOString().split('T')[0],
+    preferred_language: user.preferredLanguage || 'ka',
+    notifications: user.notifications || [],
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function createLocalUser(userData: RegisterPlayerInput): User & { passwordHash?: string } {
+  const nickname =
+    userData.nickname.trim() ||
+    `მოთამაშე_${Math.random().toString(36).slice(2, 7)}`;
+
+  return {
+    id: `usr-${Math.random().toString(36).slice(2, 11)}`,
+    firstName: userData.firstName || 'მოთამაშე',
+    lastName: userData.lastName || '',
+    email: userData.email,
+    phone: userData.phone || '',
+    nickname,
+    passwordHash: userData.passwordHash,
+    points: 100,
+    avatar: userData.avatar || createFallbackAvatar(nickname),
+    fictionalNameEnabled: userData.fictionalNameEnabled,
+    status: 'active',
+    consentAccepted: userData.consentAccepted,
+    consentDate: new Date().toISOString(),
+    completedChallenges: [],
+    hiddenChallenges: [],
+    publicChallenges: [],
+    skippedChallenges: [],
+    votesReceived: 0,
+    braveryBonuses: 0,
+    coachQuestionsRemaining: 3,
+    videoCallAvailable: true,
+    banned: false,
+    banReason: '',
+    isAdmin: false,
+    badges: [],
+    achievements: [],
+    streakCount: 1,
+    lastActiveDate: new Date().toISOString().split('T')[0],
+    preferredLanguage: userData.preferredLanguage || 'ka',
+    notifications: [
+      {
+        id: 'welcome-notif',
+        message:
+          "🌟 მოგესალმებათ 'ბიფურკაცია'! თქვენი გამბედაობის მარათონი იწყება აქ.",
+        read: false,
+        createdAt: new Date().toISOString(),
+      },
+    ],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 export const authService = {
-  async registerPlayer(userData: {
-    firstName: string;
-    lastName: string;
-    email: string;
-    phone: string;
-    nickname: string;
-    passwordHash: string;
-    avatar: string;
-    fictionalNameEnabled: boolean;
-    consentAccepted: boolean;
-    preferredLanguage?: 'ka' | 'en';
-  }): Promise<User> {
-    const backupUserObj = {
-      id: "usr-" + Math.random().toString(36).substring(2, 11),
-      firstName: userData.firstName,
-      lastName: userData.lastName,
-      email: userData.email,
-      phone: userData.phone,
-      nickname: userData.nickname,
-      passwordHash: userData.passwordHash,
-      points: 100, // starting gift points
-      avatar: userData.avatar || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(userData.nickname)}`,
-      fictionalNameEnabled: userData.fictionalNameEnabled,
-      status: "active",
-      consentAccepted: userData.consentAccepted,
-      consentDate: new Date().toISOString(),
-      accountCreatedAt: new Date().toISOString(),
-      lastLoginAt: new Date().toISOString(),
-      preferredLanguage: userData.preferredLanguage || "ka",
-      banned: false,
-      banReason: "",
-      completedChallenges: [],
-      hiddenChallenges: [],
-      publicChallenges: [],
-      skippedChallenges: [],
-      votesReceived: 0,
-      braveryBonuses: 0,
-      coachQuestionsRemaining: 3,
-      videoCallAvailable: true,
-      badges: [],
-      achievements: [],
-      streakCount: 1,
-      lastActiveDate: new Date().toISOString().split("T")[0],
-      notifications: [
-        {
-          id: "welcome-notif",
-          message: "🌟 მოგესალმებათ 'ბიფურკაცია'! თქვენი გამბედაობის მარათონი იწყება აქ. შეასრულეთ პირველი გამოწვევა 100 სტარტერ ქულით!",
-          read: false,
-          createdAt: new Date().toISOString()
-        }
-      ]
-    };
-
+  async registerPlayer(userData: RegisterPlayerInput): Promise<User> {
     try {
-      const res = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          firstName: userData.firstName,
-          lastName: userData.lastName,
-          email: userData.email,
-          phone: userData.phone,
-          nickname: userData.nickname,
-          password: userData.passwordHash,
-          fictionalNameEnabled: userData.fictionalNameEnabled,
-          avatar: userData.avatar,
-          consentAccepted: userData.consentAccepted,
-          preferredLanguage: userData.preferredLanguage || "ka"
-        })
+      const password = userData.passwordHash;
+
+      if (!userData.email) {
+        throw new Error('რეგისტრაციისთვის საჭიროა ელფოსტა.');
+      }
+
+      if (!password || password.length < 6) {
+        throw new Error('პაროლი უნდა იყოს მინიმუმ 6 სიმბოლო.');
+      }
+
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: userData.email,
+        password,
+        options: {
+          data: {
+            first_name: userData.firstName,
+            last_name: userData.lastName,
+            nickname: userData.nickname,
+            phone: userData.phone,
+          },
+        },
       });
 
-      const data = await res.json();
-      if (res.ok && data.user) {
-        const serverUser = data.user;
-        // Keep in local backup list
-        this._updateLocalBackupList(serverUser);
-        storageService.saveData(storageKeys.currentUser, serverUser);
-        return serverUser;
-      } else {
-        throw new Error(data.error || "Server registration failed");
-      }
-    } catch (e: any) {
-      console.warn("Backend unavailable or registration failed, fallback to offline local-first registry:", e.message);
-      
-      // Offline fallback: Check local dupes
-      const localPlayers = storageService.loadData<any[]>(storageKeys.players, []);
-      const dupe = localPlayers.find(p => p.email === userData.email || p.nickname === userData.nickname);
-      if (dupe) {
-        throw new Error("მოცემული ელფოსტა ან მომხმარებლის სახელი უკვე დაკავებულია.");
+      if (signUpError) {
+        throw signUpError;
       }
 
-      const localUser: User = {
-        ...backupUserObj,
-        id: backupUserObj.id
+      const authUser = signUpData.user;
+
+      if (!authUser) {
+        throw new Error('Supabase მომხმარებელი ვერ შეიქმნა.');
+      }
+
+      const nickname =
+        userData.nickname.trim() ||
+        `მოთამაშე_${Math.random().toString(36).slice(2, 7)}`;
+
+      const newUser: User = {
+        id: authUser.id,
+        firstName: userData.firstName || 'მოთამაშე',
+        lastName: userData.lastName || '',
+        email: userData.email,
+        phone: userData.phone || '',
+        nickname,
+        points: 100,
+        avatar: userData.avatar || createFallbackAvatar(nickname),
+        fictionalNameEnabled: userData.fictionalNameEnabled,
+        status: 'active',
+        consentAccepted: userData.consentAccepted,
+        consentDate: new Date().toISOString(),
+        completedChallenges: [],
+        hiddenChallenges: [],
+        publicChallenges: [],
+        skippedChallenges: [],
+        votesReceived: 0,
+        braveryBonuses: 0,
+        coachQuestionsRemaining: 3,
+        videoCallAvailable: true,
+        banned: false,
+        banReason: '',
+        isAdmin: false,
+        badges: [],
+        achievements: [],
+        streakCount: 1,
+        lastActiveDate: new Date().toISOString().split('T')[0],
+        preferredLanguage: userData.preferredLanguage || 'ka',
+        notifications: [
+          {
+            id: 'welcome-notif',
+            message:
+              "🌟 მოგესალმებათ 'ბიფურკაცია'! თქვენი გამბედაობის მარათონი იწყება აქ.",
+            read: false,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
 
-      localPlayers.push(localUser);
-      storageService.saveData(storageKeys.players, localPlayers);
+      const { data: insertedProfile, error: profileError } = await supabase
+        .from('players')
+        .insert(mapUserToPlayerRow(newUser))
+        .select()
+        .single();
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      const finalUser = mapPlayerRowToUser(insertedProfile);
+
+      storageService.saveData(storageKeys.currentUser, finalUser);
+      this._updateLocalBackupList(finalUser);
+
+      return finalUser;
+    } catch (error: any) {
+      console.warn(
+        'Supabase registration failed. Using local fallback:',
+        error?.message || error
+      );
+
+      const localUsers = storageService.loadData<Array<User & { passwordHash?: string }>>(
+        storageKeys.users,
+        []
+      );
+
+      const duplicate = localUsers.find(
+        user =>
+          user.email === userData.email ||
+          user.nickname === userData.nickname ||
+          Boolean(userData.phone && user.phone === userData.phone)
+      );
+
+      if (duplicate) {
+        throw new Error('მოცემული ელფოსტა, ტელეფონი ან ნიკნეიმი უკვე გამოყენებულია.');
+      }
+
+      const localUser = createLocalUser(userData);
+
+      storageService.saveData(storageKeys.users, [...localUsers, localUser]);
       storageService.saveData(storageKeys.currentUser, localUser);
+
       return localUser;
     }
   },
 
   async loginPlayer(identifier: string, passwordHash: string): Promise<User> {
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          identifier,
-          password: passwordHash
-        })
-      });
+      const isEmail = identifier.includes('@');
 
-      const data = await res.json();
-      if (res.ok && data.user) {
-        const serverUser = data.user;
-        this._updateLocalBackupList(serverUser);
-        storageService.saveData(storageKeys.currentUser, serverUser);
-        return serverUser;
-      } else {
-        throw new Error(data.error || "Invalid credentials on server");
+      if (!isEmail) {
+        throw new Error(
+          'Supabase შესვლისთვის საჭიროა ელფოსტა. ნიკნეიმით შესვლა იმუშავებს მხოლოდ local fallback რეჟიმში.'
+        );
       }
-    } catch (e: any) {
-      console.warn("Backend auth unavailable, trying local database auth fallback:", e.message);
-      
-      const localPlayers = storageService.loadData<any[]>(storageKeys.players, []);
-      const matched = localPlayers.find(u => 
-        (u.email === identifier || u.nickname === identifier || u.phone === identifier) && 
-        u.passwordHash === passwordHash
+
+      const { data: signInData, error: signInError } =
+        await supabase.auth.signInWithPassword({
+          email: identifier,
+          password: passwordHash,
+        });
+
+      if (signInError) {
+        throw signInError;
+      }
+
+      const authUser = signInData.user;
+
+      if (!authUser) {
+        throw new Error('Supabase მომხმარებელი ვერ მოიძებნა.');
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from('players')
+        .select('*')
+        .eq('id', authUser.id)
+        .single();
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      const user = mapPlayerRowToUser(profile);
+
+      if (user.banned) {
+        throw new Error(
+          `თქვენი პროფილი დაბლოკილია: ${user.banReason || 'წესების მძიმე დარღვევა.'}`
+        );
+      }
+
+      storageService.saveData(storageKeys.currentUser, user);
+      this._updateLocalBackupList(user);
+
+      return user;
+    } catch (error: any) {
+      console.warn(
+        'Supabase login failed. Trying local fallback:',
+        error?.message || error
+      );
+
+      const localUsers = storageService.loadData<Array<User & { passwordHash?: string }>>(
+        storageKeys.users,
+        []
+      );
+
+      const matched = localUsers.find(
+        user =>
+          (user.email === identifier ||
+            user.nickname === identifier ||
+            user.phone === identifier) &&
+          user.passwordHash === passwordHash
       );
 
       if (!matched) {
-        throw new Error("არასწორი მონაცემები ან კავშირის შეცდომა.");
+        throw new Error('არასწორი მონაცემები ან კავშირის შეცდომა.');
       }
 
       if (matched.banned) {
-        throw new Error(`თქვენი პროფილი დაბლოკილია ადმინისტრატორის მიერ: ${matched.banReason || 'წესების მძიმე დარღვევა.'}`);
+        throw new Error(
+          `თქვენი პროფილი დაბლოკილია: ${
+            matched.banReason || 'წესების მძიმე დარღვევა.'
+          }`
+        );
       }
 
-      matched.lastLoginAt = new Date().toISOString();
-      storageService.saveData(storageKeys.players, localPlayers);
-      storageService.saveData(storageKeys.currentUser, matched);
-      return matched;
+      const updatedUser = {
+        ...matched,
+        lastActiveDate: new Date().toISOString().split('T')[0],
+        updatedAt: new Date().toISOString(),
+      };
+
+      storageService.saveData(
+        storageKeys.users,
+        localUsers.map(user => (user.id === updatedUser.id ? updatedUser : user))
+      );
+      storageService.saveData(storageKeys.currentUser, updatedUser);
+
+      return updatedUser;
     }
   },
 
-  logoutPlayer(): void {
+  async logoutPlayer(): Promise<void> {
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.warn('Supabase sign out failed, clearing local session only:', error);
+    }
+
     storageService.removeData(storageKeys.currentUser);
+    storageService.removeData(storageKeys.currentUserId);
   },
 
   async restoreSession(): Promise<User | null> {
-    const localSessionUser = storageService.loadData<User | null>(storageKeys.currentUser, null);
-    if (!localSessionUser) return null;
-
     try {
-      // Sync with server if available
-      const res = await fetch(`/api/users/${localSessionUser.id}`);
-      if (res.ok) {
-        const serverUser = await res.json();
-        if (serverUser && !serverUser.error) {
-          this._updateLocalBackupList(serverUser);
-          storageService.saveData(storageKeys.currentUser, serverUser);
-          return serverUser;
+      const { data: sessionData } = await supabase.auth.getSession();
+      const authUser = sessionData.session?.user;
+
+      if (authUser) {
+        const { data: profile, error: profileError } = await supabase
+          .from('players')
+          .select('*')
+          .eq('id', authUser.id)
+          .single();
+
+        if (!profileError && profile) {
+          const user = mapPlayerRowToUser(profile);
+          storageService.saveData(storageKeys.currentUser, user);
+          this._updateLocalBackupList(user);
+          return user;
         }
       }
-    } catch (e) {
-      console.warn("Network offline during session restore, loading fallback local session user profile");
+    } catch (error) {
+      console.warn('Supabase session restore failed:', error);
     }
 
-    return localSessionUser;
+    return storageService.loadData<User | null>(storageKeys.currentUser, null);
+  },
+
+  async getCurrentUser(): Promise<User | null> {
+    return this.restoreSession();
   },
 
   _updateLocalBackupList(user: User): void {
-    const list = storageService.loadData<User[]>(storageKeys.players, []);
-    const idx = list.findIndex(u => u.id === user.id);
-    if (idx > -1) {
-      list[idx] = user;
-    } else {
-      list.push(user);
-    }
-    storageService.saveData(storageKeys.players, list);
-  }
+    const list = storageService.loadData<User[]>(storageKeys.users, []);
+    const index = list.findIndex(item => item.id === user.id);
+
+    const nextList =
+      index >= 0
+        ? list.map(item => (item.id === user.id ? user : item))
+        : [...list, user];
+
+    storageService.saveData(storageKeys.users, nextList);
+  },
 };
