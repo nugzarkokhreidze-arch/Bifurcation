@@ -1,129 +1,315 @@
-import React, { useState, useEffect } from "react";
-import { User } from "../types";
-import { storageService, storageKeys } from "../services/storageService";
-import { Heart, Volume2, Film, MessageSquare, ShieldAlert, X, Play } from "lucide-react";
+import React, { useEffect, useState } from 'react';
+import { Heart, Lock, Volume2, X } from 'lucide-react';
+
+import { Submission, User } from '../types';
+import { submissionService } from '../services/submissionService';
 
 interface VideoFeedProps {
   currentUser: User;
   onStateUpdate: () => void;
-  lang?: "ka" | "en";
+  lang?: 'ka' | 'en';
 }
 
-export default function VideoFeed({ currentUser, onStateUpdate, lang = "ka" }: VideoFeedProps) {
-  const [submissions, setSubmissions] = useState<any[]>([]);
-  const [fullscreenVideo, setFullscreenVideo] = useState<string | null>(null);
+export default function VideoFeed({
+  currentUser,
+  onStateUpdate,
+  lang = 'ka',
+}: VideoFeedProps) {
+  const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [fullscreenSubmission, setFullscreenSubmission] =
+    useState<Submission | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [likeLoadingId, setLikeLoadingId] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  async function loadPublicSubmissions() {
+    try {
+      setLoading(true);
+      setErrorMessage('');
+
+      const allSubmissions = await submissionService.getSubmissions();
+
+      const publicSubmissions = allSubmissions.filter(
+        submission => submission.visibility === 'public'
+      );
+
+      setSubmissions(publicSubmissions);
+    } catch (error: any) {
+      console.error('VideoFeed load error:', error);
+      setErrorMessage(
+        lang === 'ka'
+          ? 'საჯარო აქტივობების ჩატვირთვა ვერ მოხერხდა.'
+          : 'Could not load public submissions.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    const allSubs = storageService.loadData<any[]>("bifurcation_submissions", []);
-    // ფილტრავს მხოლოდ საჯაროდ განთავსებულ ვიდეოებს
-    setSubmissions(allSubs.filter(s => s.visibility === "public"));
-  }, [currentUser.points]);
+    loadPublicSubmissions();
+  }, [currentUser.id]);
 
-  const handleLike = (subId: string) => {
-    const allSubs = storageService.loadData<any[]>("bifurcation_submissions", []);
-    const match = allSubs.find(s => s.id === subId);
-    
-    if (match) {
-      if (!match.likedBy) match.likedBy = [];
-      if (match.likedBy.includes(currentUser.id)) return;
-      
-      match.likedBy.push(currentUser.id);
-      match.likes = (match.likes || 0) + 1;
-      
-      // ლაიქის მიმცემს ემატება +2 ქულა
-      const records = storageService.loadData<any[]>(storageKeys.monthlyPlayerRecords, []);
-      const updated = records.map(r => {
-        if (r.playerId === currentUser.id && r.marathonId === "june") {
-          r.points = (r.points || 100) + 2;
-        }
-        return r;
-      });
-      
-      storageService.saveData(storageKeys.monthlyPlayerRecords, updated);
-      storageService.saveData("bifurcation_submissions", allSubs);
-      setSubmissions(allSubs.filter(s => s.visibility === "public"));
+  async function handleLike(submissionId: string) {
+    try {
+      setLikeLoadingId(submissionId);
+      setErrorMessage('');
+
+      await submissionService.voteSubmission(submissionId, currentUser.id);
+
+      await loadPublicSubmissions();
       onStateUpdate();
+    } catch (error: any) {
+      console.error('Like error:', error);
+      setErrorMessage(
+        error?.message ||
+          (lang === 'ka'
+            ? 'მოწონების დამატება ვერ მოხერხდა.'
+            : 'Could not add like.')
+      );
+    } finally {
+      setLikeLoadingId(null);
     }
-  };
+  }
+
+  function getMediaUrl(submission: Submission) {
+    return submission.fileUrl || submission.videoUrl || '';
+  }
+
+  function renderMediaPreview(submission: Submission) {
+    const url = getMediaUrl(submission);
+
+    if (!url && !submission.reflectionText && !submission.comment) {
+      return (
+        <div className="flex h-36 items-center justify-center rounded-xl bg-slate-100 text-slate-400">
+          <Lock className="mr-2 h-5 w-5" />
+          <span className="text-xs font-bold">
+            {lang === 'ka' ? 'მედია არ არის' : 'No media'}
+          </span>
+        </div>
+      );
+    }
+
+    if (submission.submissionType === 'photo' && url) {
+      return (
+        <img
+          src={url}
+          className="h-36 w-full rounded-xl object-cover"
+          alt={lang === 'ka' ? 'აქტივობის ფოტო' : 'Submission photo'}
+        />
+      );
+    }
+
+    if (submission.submissionType === 'video' && url) {
+      return (
+        <video
+          src={url}
+          className="h-36 w-full rounded-xl bg-black object-cover"
+          muted
+          playsInline
+        />
+      );
+    }
+
+    if (submission.submissionType === 'audio' && url) {
+      return (
+        <div className="flex h-36 flex-col items-center justify-center rounded-xl bg-slate-950 text-white">
+          <Volume2 className="mb-2 h-8 w-8 animate-pulse text-violet-300" />
+          <span className="text-xs font-bold">
+            {lang === 'ka' ? 'აუდიო აქტივობა' : 'Audio submission'}
+          </span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex h-36 items-center justify-center rounded-xl bg-violet-50 p-4 text-center text-xs font-bold leading-6 text-violet-700">
+        {submission.reflectionText ||
+          submission.comment ||
+          (lang === 'ka' ? 'ტექსტური აქტივობა' : 'Text submission')}
+      </div>
+    );
+  }
+
+  function renderFullscreenMedia(submission: Submission) {
+    const url = getMediaUrl(submission);
+
+    if (submission.submissionType === 'photo' && url) {
+      return (
+        <img
+          src={url}
+          className="mx-auto max-h-[70vh] w-full rounded-2xl border border-white/10 bg-black object-contain"
+          alt={lang === 'ka' ? 'აქტივობის ფოტო' : 'Submission photo'}
+        />
+      );
+    }
+
+    if (submission.submissionType === 'audio' && url) {
+      return (
+        <div className="w-full rounded-2xl border border-white/10 bg-zinc-900 p-12 text-center">
+          <Volume2 className="mx-auto mb-4 h-12 w-12 animate-pulse text-violet-300" />
+          <audio src={url} controls autoPlay className="mt-4 w-full" />
+        </div>
+      );
+    }
+
+    if (submission.submissionType === 'video' && url) {
+      return (
+        <video
+          src={url}
+          controls
+          autoPlay
+          className="max-h-[70vh] w-full rounded-2xl border border-white/10 bg-black"
+        />
+      );
+    }
+
+    return (
+      <div className="rounded-2xl border border-white/10 bg-zinc-900 p-8 text-left text-sm leading-7 text-white">
+        {submission.reflectionText ||
+          submission.comment ||
+          (lang === 'ka' ? 'ტექსტი არ არის დამატებული.' : 'No text added.')}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4 text-left font-sans">
-      <div className="bg-white p-4 rounded-2xl border text-left">
-        <h3 className="font-extrabold text-sm uppercase text-[#27213F]">{lang === "ka" ? "🌐 სიმამაცის საჯარო კედელი" : "🌐 Live Public Matrix Stream"}</h3>
-        <p className="text-xs text-slate-500 mt-0.5">{lang === "ka" ? "შეაფასეთ მოთამაშეთა კრეატიულობა, უყურეთ რეალურ ვიდეოებს და დაუჭირეთ მხარი მოწონებით!" : "Review and like live proofs."}</p>
+      <div className="rounded-2xl border bg-white p-4 text-left">
+        <h3 className="text-sm font-extrabold uppercase text-[#27213F]">
+          {lang === 'ka'
+            ? '🌐 სიმამაცის საჯარო კედელი'
+            : '🌐 Live Public Matrix Stream'}
+        </h3>
+
+        <p className="mt-0.5 text-xs text-slate-500">
+          {lang === 'ka'
+            ? 'აქ გამოჩნდება მოთამაშეების საჯარო ფოტო, ვიდეო, აუდიო და ტექსტური აქტივობები.'
+            : 'Review public proofs and support players with likes.'}
+        </p>
       </div>
 
-      {submissions.length === 0 ? (
-        <div className="p-12 text-center bg-white border rounded-2xl text-xs text-slate-400 font-bold">{lang === "ka" ? "საჯარო გამოწვევები ამ დროისთვის ცარიელია." : "No public feeds loaded yet."}</div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-          {submissions.map((sub: any) => (
-            <div key={sub.id} className="bg-white border rounded-2xl p-4 space-y-3 shadow-xs">
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
-                <img src={sub.playerAvatar} className="w-5 h-5 rounded-full object-cover" alt="Ava" />
-                <span>@{sub.playerNickname}</span>
-              </div>
-
-              {/* რეალური ინტერაქტიული მედია ბლოკი */}
-              <div 
-                onClick={() => setFullscreenVideo(sub.fileUrl)}
-                className="h-36 bg-black rounded-xl overflow-hidden flex items-center justify-center relative cursor-pointer group"
-              >
-                <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 flex items-center justify-center text-white text-xs font-bold z-10 transition-colors">▶ {lang === "ka" ? "ჩართვა" : "Play Proof"}</div>
-                {sub.submissionType === "video" && <video src={sub.fileUrl} className="w-full h-full object-cover" />}
-                {sub.submissionType === "photo" && <img src={sub.fileUrl} className="w-full h-full object-cover" alt="Proof" />}
-                {sub.submissionType === "audio" && <Volume2 className="w-6 h-6 text-slate-400 animate-pulse" />}
-              </div>
-
-              <h4 className="font-black text-xs text-[#27213F] truncate">{sub.challengeTitle}</h4>
-              <p className="text-[11px] text-slate-500 line-clamp-2">"{sub.textDescription}"</p>
-
-              <div className="flex justify-between items-center pt-2 border-t">
-                <button 
-                  onClick={() => handleLike(sub.id)}
-                  className="px-3 py-1 bg-purple-50 hover:bg-purple-100 text-[#7C4DFF] text-[10px] font-bold rounded-lg flex items-center gap-1 cursor-pointer transition-all"
-                >
-                  ❤️ {sub.likes || 0} {lang === "ka" ? "მოწონება" : "Likes"}
-                </button>
-                <span className="text-[9px] font-mono text-slate-400">+2 ქულა მიმცემს</span>
-              </div>
-            </div>
-          ))}
+      {errorMessage && (
+        <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4 text-xs font-bold text-rose-700">
+          {errorMessage}
         </div>
       )}
 
-      {/* LIGHTBOX FOR VIDEOFEED */}
-      {fullscreenVideo && (
-        <div className="fixed inset-0 z-55 bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center p-4 text-white">
-          <div className="max-w-xl w-full text-center space-y-4">
-            {(() => {
-              const url = fullscreenVideo;
-              const isImage = url.match(/\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i) || url.startsWith("data:image/");
-              const isAudio = url.match(/\.(mp3|wav|ogg|aac|m4a)($|\?)/i) || url.startsWith("data:audio/");
+      {loading ? (
+        <div className="rounded-2xl border bg-white p-12 text-center text-xs font-bold text-slate-400">
+          {lang === 'ka' ? 'იტვირთება...' : 'Loading...'}
+        </div>
+      ) : submissions.length === 0 ? (
+        <div className="rounded-2xl border bg-white p-12 text-center text-xs font-bold text-slate-400">
+          {lang === 'ka'
+            ? 'საჯარო აქტივობები ამ დროისთვის ცარიელია.'
+            : 'No public submissions loaded yet.'}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+          {submissions.map(submission => {
+            const alreadyLiked =
+              submission.likedBy?.includes(currentUser.id) ||
+              submission.votedUserIds?.includes(currentUser.id);
 
-              if (isImage) {
-                return <img src={url} className="w-full rounded-2xl bg-black max-h-[60vh] object-contain border border-white/10 mx-auto" alt="Proof" />;
-              }
-              if (isAudio) {
-                return (
-                  <div className="p-12 w-full text-center bg-zinc-900 rounded-2xl border border-white/10">
-                    <Volume2 className="w-12 h-12 text-[#7C4DFF] mx-auto mb-2 animate-pulse" />
-                    <audio src={url} controls autoPlay className="w-full mt-4" />
+            const isOwnSubmission = submission.playerId === currentUser.id;
+
+            return (
+              <div
+                key={submission.id}
+                className="space-y-3 rounded-2xl border bg-white p-4 shadow-xs"
+              >
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                  {submission.playerAvatar ? (
+                    <img
+                      src={submission.playerAvatar}
+                      className="h-5 w-5 rounded-full object-cover"
+                      alt="avatar"
+                    />
+                  ) : (
+                    <div className="h-5 w-5 rounded-full bg-violet-100" />
+                  )}
+
+                  <span>@{submission.playerNickname || 'მოთამაშე'}</span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setFullscreenSubmission(submission)}
+                  className="relative block w-full cursor-pointer overflow-hidden rounded-xl bg-black text-left"
+                >
+                  {renderMediaPreview(submission)}
+
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 text-xs font-black text-white opacity-0 transition-opacity hover:opacity-100">
+                    ▶ {lang === 'ka' ? 'ნახვა' : 'Open'}
                   </div>
-                );
-              }
-              return <video src={url} controls autoPlay className="w-full rounded-2xl bg-black max-h-[60vh] border border-white/10" />;
-            })()}
-            <button 
-              onClick={() => setFullscreenVideo(null)}
-              className="px-8 py-3 bg-[#7C4DFF] text-white text-xs font-black rounded-xl uppercase tracking-widest cursor-pointer shadow-md mx-auto block"
+                </button>
+
+                <h4 className="truncate text-xs font-black text-[#27213F]">
+                  {submission.challengeTitle ||
+                    (lang === 'ka' ? 'გამოწვევა' : 'Challenge')}
+                </h4>
+
+                {(submission.reflectionText || submission.comment) && (
+                  <p className="line-clamp-2 text-[11px] text-slate-500">
+                    “{submission.reflectionText || submission.comment}”
+                  </p>
+                )}
+
+                <div className="flex items-center justify-between border-t pt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleLike(submission.id)}
+                    disabled={
+                      likeLoadingId === submission.id ||
+                      alreadyLiked ||
+                      isOwnSubmission
+                    }
+                    className={`flex cursor-pointer items-center gap-1 rounded-lg px-3 py-1 text-[10px] font-bold transition-all ${
+                      alreadyLiked || isOwnSubmission
+                        ? 'bg-slate-100 text-slate-400'
+                        : 'bg-purple-50 text-[#7C4DFF] hover:bg-purple-100'
+                    }`}
+                  >
+                    <Heart className="h-3 w-3" />
+                    {submission.likes || submission.votes || 0}{' '}
+                    {lang === 'ka' ? 'მოწონება' : 'Likes'}
+                  </button>
+
+                  <span className="font-mono text-[9px] text-slate-400">
+                    {isOwnSubmission
+                      ? lang === 'ka'
+                        ? 'საკუთარზე არა'
+                        : 'Own post'
+                      : alreadyLiked
+                        ? lang === 'ka'
+                          ? 'უკვე მოიწონე'
+                          : 'Liked'
+                        : '+2'}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {fullscreenSubmission && (
+        <div className="fixed inset-0 z-55 flex flex-col items-center justify-center bg-black/90 p-4 text-white backdrop-blur-sm">
+          <div className="w-full max-w-2xl space-y-4 text-center">
+            {renderFullscreenMedia(fullscreenSubmission)}
+
+            <button
+              type="button"
+              onClick={() => setFullscreenSubmission(null)}
+              className="mx-auto flex items-center gap-2 rounded-xl bg-[#7C4DFF] px-8 py-3 text-xs font-black uppercase tracking-widest text-white shadow-md"
             >
-              ✕ {lang === "ka" ? "ჩვეულ ფორმაში დაბრუნება" : "Close Player"}
+              <X className="h-4 w-4" />
+              {lang === 'ka' ? 'დახურვა' : 'Close Player'}
             </button>
           </div>
         </div>
       )}
-
     </div>
   );
 }
