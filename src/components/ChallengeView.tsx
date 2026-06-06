@@ -6,6 +6,8 @@ import {
   Eye,
   EyeOff,
   Mic,
+  ShieldCheck,
+  Sparkles,
   Star,
   UploadCloud,
   Video,
@@ -15,6 +17,18 @@ import {
 import { Challenge, ChallengeSubmissionType, User } from '../types';
 import { marathonService } from '../services/marathonService';
 import { playerService } from '../services/playerService';
+import {
+  calculateCompletionPoints,
+  calculateExpiredPenalty,
+  calculateSkipPenalty,
+  createChallengeTiming,
+  formatDeadlineCountdown,
+  getBaseChallengePoints,
+  getDifficultyLabel,
+  getScoringText,
+  isChallengeExpired,
+  POINTS_CONFIG,
+} from '../services/pointsService';
 import { storageKeys, storageService } from '../services/storageService';
 import { submissionService } from '../services/submissionService';
 
@@ -31,17 +45,17 @@ interface ChallengeViewProps {
 
 type MediaType = 'video' | 'photo' | 'audio';
 
-const cyberpunkImages = [
-  'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=500&q=80',
-  'https://images.unsplash.com/photo-1614728894747-a83421e2b9c9?auto=format&fit=crop&w=500&q=80',
-  'https://images.unsplash.com/photo-1634017839464-5c339ebe3cb4?auto=format&fit=crop&w=500&q=80',
-  'https://images.unsplash.com/photo-1462331940025-496dfbfc7564?auto=format&fit=crop&w=500&q=80',
-  'https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?auto=format&fit=crop&w=500&q=80',
-  'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=500&q=80',
-  'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=500&q=80',
-  'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?auto=format&fit=crop&w=500&q=80',
-  'https://images.unsplash.com/photo-1538370965046-79c0d6907d47?auto=format&fit=crop&w=500&q=80',
-  'https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?auto=format&fit=crop&w=500&q=80',
+const challengeImages = [
+  'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=700&q=80',
+  'https://images.unsplash.com/photo-1614728894747-a83421e2b9c9?auto=format&fit=crop&w=700&q=80',
+  'https://images.unsplash.com/photo-1634017839464-5c339ebe3cb4?auto=format&fit=crop&w=700&q=80',
+  'https://images.unsplash.com/photo-1462331940025-496dfbfc7564?auto=format&fit=crop&w=700&q=80',
+  'https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?auto=format&fit=crop&w=700&q=80',
+  'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=700&q=80',
+  'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=700&q=80',
+  'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?auto=format&fit=crop&w=700&q=80',
+  'https://images.unsplash.com/photo-1538370965046-79c0d6907d47?auto=format&fit=crop&w=700&q=80',
+  'https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?auto=format&fit=crop&w=700&q=80',
 ];
 
 function normalizeMarathonId(id: string) {
@@ -76,6 +90,7 @@ function detectMediaType(file: File): MediaType {
   const name = file.name.toLowerCase();
 
   if (type.startsWith('image/')) return 'photo';
+
   if (type.startsWith('audio/') || /\.(mp3|wav|m4a|ogg|aac)$/i.test(name)) {
     return 'audio';
   }
@@ -85,6 +100,32 @@ function detectMediaType(file: File): MediaType {
 
 function isTextSubmission(type?: ChallengeSubmissionType) {
   return type === 'reflection' || type === 'text';
+}
+
+function uniqueList(list: string[] = [], item: string) {
+  return Array.from(new Set([...list, item]));
+}
+
+function removeFromList(list: string[] = [], item: string) {
+  return list.filter(id => id !== item);
+}
+
+function formatDateTime(value?: string, lang: 'ka' | 'en' = 'ka') {
+  if (!value) return lang === 'ka' ? 'ჯერ არ დაწყებულა' : 'Not started yet';
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return lang === 'ka' ? 'არასწორი თარიღი' : 'Invalid date';
+  }
+
+  return date.toLocaleString(lang === 'ka' ? 'ka-GE' : 'en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 export default function ChallengeView({
@@ -176,6 +217,39 @@ export default function ChallengeView({
     );
   }, [currentUser, selectedMarathonId, countdownTick, forceUpdate]);
 
+  const selectedTiming = useMemo(() => {
+    if (!selectedChallenge || !playerRecord?.acceptedDates) return null;
+
+    const timing = playerRecord.acceptedDates[selectedChallenge.id];
+
+    if (!timing) return null;
+
+    if (typeof timing === 'string') {
+      return {
+        takenAt: new Date(
+          new Date(timing).getTime() -
+            POINTS_CONFIG.challengeDeadlineHours * 60 * 60 * 1000
+        ).toISOString(),
+        expireAt: timing,
+      };
+    }
+
+    return {
+      takenAt: timing.takenAt,
+      expireAt: timing.expireAt,
+    };
+  }, [selectedChallenge, playerRecord, countdownTick]);
+
+  const selectedPointsPreview = useMemo(() => {
+    if (!selectedChallenge) return null;
+
+    return calculateCompletionPoints({
+      challenge: selectedChallenge,
+      visibility,
+      expireAt: selectedTiming?.expireAt,
+    });
+  }, [selectedChallenge, visibility, selectedTiming, countdownTick]);
+
   function getChallengeTitle(challenge: Challenge) {
     return lang === 'ka'
       ? challenge.title
@@ -199,9 +273,14 @@ export default function ChallengeView({
   }
 
   function getSafetyRules(challenge: Challenge) {
+    const fallbackKa =
+      'შეასრულეთ გამოწვევა უსაფრთხოდ, პატივისცემით და კანონის დაცვით. არ ჩააყენოთ საკუთარი თავი ან სხვა ადამიანი უხერხულ, საშიშ ან დამამცირებელ მდგომარეობაში. თუ სიტუაცია არაკომფორტულია, შეწყვიტეთ მოქმედება.';
+    const fallbackEn =
+      'Complete the challenge safely, respectfully and legally. Do not put yourself or others in an unsafe, humiliating or uncomfortable situation. Stop if the situation feels wrong.';
+
     return lang === 'ka'
-      ? challenge.safetyRules || ''
-      : challenge.safetyRules_en || challenge.safetyRules || '';
+      ? challenge.safetyRules || fallbackKa
+      : challenge.safetyRules_en || challenge.safetyRules || fallbackEn;
   }
 
   function resetUploadForm() {
@@ -215,6 +294,7 @@ export default function ChallengeView({
     setVisibility('public');
     setMessage('');
     setErrorMessage('');
+    setIsDragActive(false);
   }
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -261,12 +341,13 @@ export default function ChallengeView({
         playerId,
         marathonId,
         participationConfirmed: true,
-        startingBonusGiven: false,
-        startingBonusAmount: 0,
-        points: currentUser?.points || 100,
+        startingBonusGiven: true,
+        startingBonusAmount: POINTS_CONFIG.monthlyStartingBonus,
+        points: currentUser?.points ?? POINTS_CONFIG.monthlyStartingBonus,
         acceptedChallenges: [],
         completedChallenges: [],
         skippedChallenges: [],
+        expiredChallenges: [],
         acceptedDates: {},
         publicVideos: [],
         hiddenVideos: [],
@@ -283,7 +364,33 @@ export default function ChallengeView({
       records.push(record);
     }
 
+    if (!record.acceptedChallenges) record.acceptedChallenges = [];
+    if (!record.completedChallenges) record.completedChallenges = [];
+    if (!record.skippedChallenges) record.skippedChallenges = [];
+    if (!record.expiredChallenges) record.expiredChallenges = [];
+    if (!record.acceptedDates) record.acceptedDates = {};
+    if (!record.publicVideos) record.publicVideos = [];
+    if (!record.hiddenVideos) record.hiddenVideos = [];
+    if (!record.pointHistory) record.pointHistory = [];
+
     return { records, record };
+  }
+
+  function saveRecord(records: any[], record: any) {
+    record.updatedAt = new Date().toISOString();
+    storageService.saveData(storageKeys.monthlyPlayerRecords, records);
+    setForceUpdate(prev => prev + 1);
+    onStateUpdate();
+  }
+
+  function addPointHistory(record: any, item: any) {
+    if (!record.pointHistory) record.pointHistory = [];
+
+    record.pointHistory.unshift({
+      id: `ph-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      ...item,
+      createdAt: new Date().toISOString(),
+    });
   }
 
   async function handleAcceptChallenge(challengeId: string) {
@@ -294,7 +401,7 @@ export default function ChallengeView({
         alert(
           lang === 'ka'
             ? 'გამოწვევის მისაღებად გთხოვთ გაიაროთ ავტორიზაცია.'
-            : 'Please login to accept the challenge.'
+            : 'Please sign in to accept the challenge.'
         );
       }
 
@@ -313,34 +420,47 @@ export default function ChallengeView({
       const marathonId = normalizeMarathonId(selectedMarathonId);
       const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
 
-      if (!record.acceptedChallenges) record.acceptedChallenges = [];
-      if (!record.completedChallenges) record.completedChallenges = [];
-      if (!record.skippedChallenges) record.skippedChallenges = [];
-      if (!record.acceptedDates) record.acceptedDates = {};
+      const alreadyCompleted = record.completedChallenges.includes(challengeId);
 
-      if (!record.acceptedChallenges.includes(challengeId)) {
-        record.acceptedChallenges.push(challengeId);
+      if (alreadyCompleted) {
+        setMessage(
+          lang === 'ka'
+            ? 'ეს გამოწვევა უკვე შესრულებულია.'
+            : 'This challenge is already completed.'
+        );
+        return;
       }
 
-      record.skippedChallenges = record.skippedChallenges.filter(
-        (id: string) => id !== challengeId
+      record.acceptedChallenges = uniqueList(
+        record.acceptedChallenges,
+        challengeId
       );
 
-      const now = new Date();
+      record.skippedChallenges = removeFromList(
+        record.skippedChallenges,
+        challengeId
+      );
 
-      record.acceptedDates[challengeId] = {
-        takenAt: now.toISOString(),
-        expireAt: new Date(
-          now.getTime() + 3 * 24 * 60 * 60 * 1000
-        ).toISOString(),
-      };
+      record.expiredChallenges = removeFromList(
+        record.expiredChallenges,
+        challengeId
+      );
 
-      record.updatedAt = new Date().toISOString();
+      record.acceptedDates[challengeId] = createChallengeTiming(new Date());
 
-      storageService.saveData(storageKeys.monthlyPlayerRecords, records);
+      addPointHistory(record, {
+        challengeId,
+        amount: 0,
+        reason: 'challenge-accepted',
+      });
 
-      setForceUpdate(prev => prev + 1);
-      onStateUpdate();
+      saveRecord(records, record);
+
+      setMessage(
+        lang === 'ka'
+          ? 'გამოწვევა მიღებულია. თქვენ გაქვთ სრული 72 საათი.'
+          : 'Challenge accepted. You have 72 hours.'
+      );
     } catch (error: any) {
       setErrorMessage(
         error?.message ||
@@ -349,61 +469,165 @@ export default function ChallengeView({
             : 'Could not accept challenge.')
       );
     } finally {
-      setMessage('');
       setIsUploading(false);
+      window.setTimeout(() => setMessage(''), 1200);
     }
   }
 
   async function handleSkipChallenge(challengeId: string) {
     if (!currentUser) return;
 
+    const penalty = calculateSkipPenalty();
+
     const confirmed = window.confirm(
       lang === 'ka'
-        ? 'ნამდვილად გსურთ გამოწვევის გამოტოვება? ჩამოგეჭრებათ -3 ქულა.'
-        : 'Skip challenge? Your points will be reduced by -3.'
+        ? `ნამდვილად გსურთ გამოწვევის აცილება? დაგაკლდებათ ${penalty} ქულა.`
+        : `Skip this challenge? You will receive ${penalty} points.`
     );
 
     if (!confirmed) return;
 
-    const marathonId = normalizeMarathonId(selectedMarathonId);
-    const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
-
-    if (!record.skippedChallenges) record.skippedChallenges = [];
-    if (!record.acceptedChallenges) record.acceptedChallenges = [];
-
-    if (!record.skippedChallenges.includes(challengeId)) {
-      record.skippedChallenges.push(challengeId);
-    }
-
-    record.acceptedChallenges = record.acceptedChallenges.filter(
-      (id: string) => id !== challengeId
-    );
-
-    record.points = Math.max(0, (record.points || currentUser.points || 0) - 3);
-    record.updatedAt = new Date().toISOString();
-
-    storageService.saveData(storageKeys.monthlyPlayerRecords, records);
+    setIsUploading(true);
+    setErrorMessage('');
 
     try {
-      await playerService.updatePlayer(currentUser.id, {
-        points: Math.max(0, (currentUser.points || 0) - 3),
-        skippedChallenges: Array.from(
-          new Set([...(currentUser.skippedChallenges || []), challengeId])
-        ),
+      const marathonId = normalizeMarathonId(selectedMarathonId);
+      const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
+
+      record.skippedChallenges = uniqueList(record.skippedChallenges, challengeId);
+      record.acceptedChallenges = removeFromList(
+        record.acceptedChallenges,
+        challengeId
+      );
+
+      record.points = Math.max(0, (record.points || currentUser.points || 0) + penalty);
+
+      addPointHistory(record, {
+        challengeId,
+        amount: penalty,
+        reason: 'challenge-skipped',
       });
-    } catch (error) {
-      console.warn('Player skip update saved locally only:', error);
+
+      saveRecord(records, record);
+
+      await playerService.markChallengeSkipped({
+        playerId: currentUser.id,
+        challengeId,
+        penalty,
+      });
+
+      setSelectedChallenge(null);
+      resetUploadForm();
+    } catch (error: any) {
+      setErrorMessage(
+        error?.message ||
+          (lang === 'ka'
+            ? 'გამოწვევის აცილება ვერ მოხერხდა.'
+            : 'Could not skip challenge.')
+      );
+    } finally {
+      setIsUploading(false);
+      onStateUpdate();
+    }
+  }
+
+  async function applyExpiredPenaltyIfNeeded(challengeId: string) {
+    if (!currentUser) return false;
+
+    const marathonId = normalizeMarathonId(selectedMarathonId);
+    const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
+    const timing = record.acceptedDates?.[challengeId];
+    const expireAt = typeof timing === 'string' ? timing : timing?.expireAt;
+
+    if (!expireAt || !isChallengeExpired(expireAt)) {
+      return false;
     }
 
-    setSelectedChallenge(null);
-    setForceUpdate(prev => prev + 1);
-    onStateUpdate();
+    if (record.completedChallenges?.includes(challengeId)) {
+      return false;
+    }
+
+    if (record.expiredChallenges?.includes(challengeId)) {
+      return true;
+    }
+
+    const penalty = calculateExpiredPenalty();
+
+    record.expiredChallenges = uniqueList(record.expiredChallenges, challengeId);
+    record.acceptedChallenges = removeFromList(record.acceptedChallenges, challengeId);
+    record.points = Math.max(0, (record.points || currentUser.points || 0) + penalty);
+
+    addPointHistory(record, {
+      challengeId,
+      amount: penalty,
+      reason: 'deadline-expired',
+    });
+
+    saveRecord(records, record);
+
+    try {
+      await playerService.addPoints(currentUser.id, penalty, 'deadline-expired');
+    } catch (error) {
+      console.warn('Expired penalty saved locally only:', error);
+    }
+
+    return true;
   }
 
   async function handleFormSubmit(event: React.FormEvent) {
     event.preventDefault();
 
     if (!currentUser || !selectedChallenge) return;
+
+    setErrorMessage('');
+
+    const marathonId = normalizeMarathonId(selectedMarathonId);
+    const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
+
+    const alreadyCompleted = record.completedChallenges.includes(
+      selectedChallenge.id
+    );
+
+    if (alreadyCompleted) {
+      setErrorMessage(
+        lang === 'ka'
+          ? 'ეს გამოწვევა უკვე შესრულებულია.'
+          : 'This challenge has already been completed.'
+      );
+      return;
+    }
+
+    const expired = await applyExpiredPenaltyIfNeeded(selectedChallenge.id);
+
+    if (expired) {
+      setErrorMessage(
+        lang === 'ka'
+          ? 'დედლაინი ამოიწურა. ამ გამოწვევის ატვირთვა აღარ შეიძლება.'
+          : 'The deadline has expired. You can no longer upload this challenge.'
+      );
+      return;
+    }
+
+    if (record.skippedChallenges.includes(selectedChallenge.id)) {
+      setErrorMessage(
+        lang === 'ka'
+          ? 'ეს გამოწვევა აცილებულია. ატვირთვამდე თავიდან მიიღეთ გამოწვევა.'
+          : 'This challenge was skipped. Please accept it again before uploading.'
+      );
+      return;
+    }
+
+    if (!record.acceptedChallenges.includes(selectedChallenge.id)) {
+      setErrorMessage(
+        lang === 'ka'
+          ? 'ატვირთვამდე ჯერ უნდა მიიღოთ გამოწვევა.'
+          : 'Please accept the challenge before uploading.'
+      );
+      return;
+    }
+
+    const timing = record.acceptedDates?.[selectedChallenge.id];
+    const expireAt = typeof timing === 'string' ? timing : timing?.expireAt;
 
     const submissionType: ChallengeSubmissionType = isTextSubmission(
       selectedChallenge.submissionType
@@ -414,8 +638,8 @@ export default function ChallengeView({
     if (!isTextSubmission(submissionType) && !selectedFile) {
       alert(
         lang === 'ka'
-          ? 'გთხოვთ ატვირთოთ ფაილი მტკიცებულებისთვის.'
-          : 'Please upload a media proof file.'
+          ? 'გთხოვთ ატვირთოთ ფოტო, ვიდეო ან აუდიო მტკიცებულება.'
+          : 'Please upload a photo, video or audio proof file.'
       );
       return;
     }
@@ -431,12 +655,15 @@ export default function ChallengeView({
 
     setIsUploading(true);
     setMessage(lang === 'ka' ? 'მიმდინარეობს ატვირთვა...' : 'Uploading...');
-    setErrorMessage('');
 
     try {
-      const marathonId = normalizeMarathonId(selectedMarathonId);
+      const points = calculateCompletionPoints({
+        challenge: selectedChallenge,
+        visibility,
+        expireAt,
+      });
 
-      await submissionService.createSubmission({
+      const savedSubmission = await submissionService.createSubmission({
         playerId: currentUser.id,
         challengeId: selectedChallenge.id,
         marathonId,
@@ -447,69 +674,58 @@ export default function ChallengeView({
         file: selectedFile,
       });
 
-      const rewardBase =
-        selectedChallenge.completionReward || selectedChallenge.points || 20;
-
-      const publicBonus =
-        visibility === 'public'
-          ? selectedChallenge.publicVideoBonus ||
-            selectedChallenge.publicBraveryBonus ||
-            15
-          : 0;
-
-      const totalGained = rewardBase + publicBonus;
-
-      const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
-
-      if (!record.completedChallenges) record.completedChallenges = [];
-      if (!record.acceptedChallenges) record.acceptedChallenges = [];
-
-      if (!record.completedChallenges.includes(selectedChallenge.id)) {
-        record.completedChallenges.push(selectedChallenge.id);
-      }
-
-      record.acceptedChallenges = record.acceptedChallenges.filter(
-        (id: string) => id !== selectedChallenge.id
+      record.completedChallenges = uniqueList(
+        record.completedChallenges,
+        selectedChallenge.id
       );
 
-      record.points = (record.points || currentUser.points || 0) + totalGained;
-      record.updatedAt = new Date().toISOString();
+      record.acceptedChallenges = removeFromList(
+        record.acceptedChallenges,
+        selectedChallenge.id
+      );
 
-      storageService.saveData(storageKeys.monthlyPlayerRecords, records);
+      record.skippedChallenges = removeFromList(
+        record.skippedChallenges,
+        selectedChallenge.id
+      );
 
-      await playerService.updatePlayer(currentUser.id, {
-        points: (currentUser.points || 0) + totalGained,
-        completedChallenges: Array.from(
-          new Set([
-            ...(currentUser.completedChallenges || []),
-            selectedChallenge.id,
-          ])
-        ),
-        publicChallenges:
-          visibility === 'public'
-            ? Array.from(
-                new Set([
-                  ...(currentUser.publicChallenges || []),
-                  selectedChallenge.id,
-                ])
-              )
-            : currentUser.publicChallenges || [],
-        hiddenChallenges:
-          visibility === 'hidden'
-            ? Array.from(
-                new Set([
-                  ...(currentUser.hiddenChallenges || []),
-                  selectedChallenge.id,
-                ])
-              )
-            : currentUser.hiddenChallenges || [],
-        braveryBonuses: (currentUser.braveryBonuses || 0) + publicBonus,
+      record.expiredChallenges = removeFromList(
+        record.expiredChallenges,
+        selectedChallenge.id
+      );
+
+      if (visibility === 'public') {
+        record.publicVideos = uniqueList(record.publicVideos, savedSubmission.id);
+      } else {
+        record.hiddenVideos = uniqueList(record.hiddenVideos, savedSubmission.id);
+      }
+
+      record.points = Math.max(
+        0,
+        (record.points || currentUser.points || 0) + points.totalPoints
+      );
+
+      addPointHistory(record, {
+        challengeId: selectedChallenge.id,
+        submissionId: savedSubmission.id,
+        amount: points.totalPoints,
+        reason: 'challenge-completed',
+        breakdown: points,
+      });
+
+      saveRecord(records, record);
+
+      await playerService.markChallengeCompleted({
+        playerId: currentUser.id,
+        challengeId: selectedChallenge.id,
+        visibility,
+        gainedPoints: points.totalPoints,
       });
 
       setMessage(
         lang === 'ka'
-          ? 'დავალება წარმატებით აიტვირთა! 🎉'
-          : 'Proof submitted! 🎉'
+          ? `დავალება წარმატებით აიტვირთა! დაემატა +${points.totalPoints} ქულა 🎉`
+          : `Proof submitted! +${points.totalPoints} points added 🎉`
       );
 
       window.setTimeout(() => {
@@ -532,26 +748,67 @@ export default function ChallengeView({
     }
   }
 
-  function getDeadlineCountdown(expireAtStr?: string) {
-    if (!expireAtStr) return '';
-
-    const expireAt = new Date(expireAtStr);
-    const diff = expireAt.getTime() - Date.now();
-
-    if (diff <= 0) {
-      return lang === 'ka' ? 'ვადა ამოიწურა! ❌' : 'Deadline expired! ❌';
+  function getChallengeStatus(challenge: Challenge) {
+    if (!playerRecord) {
+      return {
+        key: 'locked',
+        label: lang === 'ka' ? 'ჩაკეტილი' : 'Locked',
+        className: 'text-slate-400',
+        icon: '🔒',
+      };
     }
 
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor(
-      (diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
-    );
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+    const completed = playerRecord.completedChallenges?.includes(challenge.id);
+    const skipped = playerRecord.skippedChallenges?.includes(challenge.id);
+    const expiredStored = playerRecord.expiredChallenges?.includes(challenge.id);
+    const accepted = playerRecord.acceptedChallenges?.includes(challenge.id);
 
-    return lang === 'ka'
-      ? `დარჩენილია: ${days}დ ${hours}სთ ${minutes}წთ ${seconds}წმ`
-      : `Time left: ${days}d ${hours}h ${minutes}m ${seconds}s`;
+    const timing = playerRecord.acceptedDates?.[challenge.id];
+    const expireAt = typeof timing === 'string' ? timing : timing?.expireAt;
+    const expiredByTime = accepted && isChallengeExpired(expireAt);
+
+    if (completed) {
+      return {
+        key: 'completed',
+        label: lang === 'ka' ? 'შესრულებული' : 'Completed',
+        className: 'text-emerald-600',
+        icon: '✅',
+      };
+    }
+
+    if (expiredStored || expiredByTime) {
+      return {
+        key: 'expired',
+        label: lang === 'ka' ? 'ვადაგასული' : 'Expired',
+        className: 'text-rose-600',
+        icon: '⏳',
+      };
+    }
+
+    if (skipped) {
+      return {
+        key: 'skipped',
+        label: lang === 'ka' ? 'აცილებული' : 'Skipped',
+        className: 'text-rose-500',
+        icon: '❌',
+      };
+    }
+
+    if (accepted) {
+      return {
+        key: 'active',
+        label: lang === 'ka' ? 'მიმდინარე' : 'Active',
+        className: 'text-[#7C4DFF]',
+        icon: '⚡',
+      };
+    }
+
+    return {
+      key: 'locked',
+      label: lang === 'ka' ? 'ჩაკეტილი' : 'Locked',
+      className: 'text-slate-400',
+      icon: '🔒',
+    };
   }
 
   function handleDrag(event: React.DragEvent) {
@@ -587,7 +844,7 @@ export default function ChallengeView({
   }
 
   return (
-    <div className="space-y-4 text-[#27213F] antialiased">
+    <div className="space-y-5 text-[#27213F] antialiased">
       <input
         type="file"
         ref={fileInputRef}
@@ -605,17 +862,9 @@ export default function ChallengeView({
       ) : (
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
           {challenges.map((challenge, index) => {
-            const isCompleted = playerRecord?.completedChallenges?.includes(
-              challenge.id
-            );
-            const isAccepted =
-              playerRecord?.acceptedChallenges?.includes(challenge.id) ||
-              isCompleted;
-            const isSkipped = playerRecord?.skippedChallenges?.includes(
-              challenge.id
-            );
-
-            const cardImage = cyberpunkImages[index % cyberpunkImages.length];
+            const status = getChallengeStatus(challenge);
+            const cardImage = challengeImages[index % challengeImages.length];
+            const basePoints = getBaseChallengePoints(challenge);
 
             return (
               <button
@@ -626,7 +875,7 @@ export default function ChallengeView({
                   setMessage('');
                   setErrorMessage('');
                 }}
-                className={`relative cursor-pointer overflow-hidden rounded-3xl border bg-white text-left transition-all duration-300 hover:scale-[1.02] hover:shadow-lg ${
+                className={`relative cursor-pointer overflow-hidden rounded-3xl border bg-white text-left transition-all duration-300 hover:scale-[1.02] hover:shadow-xl ${
                   selectedChallenge?.id === challenge.id
                     ? 'border-[#7C4DFF] shadow-[0_0_20px_rgba(124,77,255,0.15)]'
                     : 'border-violet-100'
@@ -643,17 +892,11 @@ export default function ChallengeView({
 
                   <span className="absolute left-3 top-3 flex items-center gap-1 rounded-full border border-amber-500/20 bg-black/60 px-2.5 py-1 font-mono text-[11px] font-black text-amber-300 backdrop-blur-md">
                     <Star className="h-3.5 w-3.5 fill-amber-300 text-amber-300" />
-                    {challenge.completionReward || challenge.points || 20}
+                    +{basePoints} {lang === 'ka' ? 'ქულა' : 'pts'}
                   </span>
 
                   <span className="absolute right-3 top-3 rounded-md bg-[#7C4DFF] px-2.5 py-1 text-[9px] font-black uppercase tracking-widest text-white shadow-md">
-                    {lang === 'ka'
-                      ? challenge.difficulty === 'easy'
-                        ? 'ადვილი'
-                        : challenge.difficulty === 'medium'
-                          ? 'საშუალო'
-                          : 'რთული'
-                      : challenge.difficulty}
+                    {getDifficultyLabel(challenge.difficulty, lang)}
                   </span>
 
                   <span className="absolute bottom-2 left-4 font-mono text-[11px] font-extrabold text-[#7C4DFF]">
@@ -662,32 +905,26 @@ export default function ChallengeView({
                 </div>
 
                 <div className="space-y-4 p-5">
-                  <h4 className="h-9 line-clamp-2 text-xs font-extrabold leading-snug tracking-normal text-[#1E1B35]">
+                  <h4 className="min-h-10 line-clamp-2 text-xs font-extrabold leading-snug tracking-normal text-[#1E1B35]">
                     {getChallengeTitle(challenge)}
                   </h4>
 
+                  <div className="grid grid-cols-2 gap-2 text-[10px] font-black">
+                    <div className="rounded-xl bg-[#F1ECFF] px-3 py-2 text-[#7C4DFF]">
+                      {lang === 'ka' ? 'ჯილდო' : 'Reward'}: +{basePoints}
+                    </div>
+
+                    <div className={`rounded-xl bg-slate-50 px-3 py-2 ${status.className}`}>
+                      {status.icon} {status.label}
+                    </div>
+                  </div>
+
                   <div className="flex items-center justify-between border-t border-violet-50 pt-3 text-[10px] font-black uppercase tracking-wider">
-                    <span
-                      className={`flex items-center gap-1 ${
-                        isCompleted
-                          ? 'text-emerald-600'
-                          : isSkipped
-                            ? 'text-rose-500'
-                            : isAccepted
-                              ? 'text-[#7C4DFF]'
-                              : 'text-slate-400'
-                      }`}
-                    >
-                      {isCompleted
-                        ? `✅ ${lang === 'ka' ? 'შესრულებული' : 'Completed'}`
-                        : isSkipped
-                          ? `❌ ${lang === 'ka' ? 'აცილებული' : 'Skipped'}`
-                          : isAccepted
-                            ? `⚡ ${lang === 'ka' ? 'მიმდინარე' : 'Active'}`
-                            : `🔒 ${lang === 'ka' ? 'ჩაკეტილი' : 'Locked'}`}
+                    <span className={status.className}>
+                      {lang === 'ka' ? 'სტატუსი' : 'Status'}: {status.label}
                     </span>
 
-                    <span className="rounded-lg bg-[#F1ECFF] px-2.5 py-1 text-[9px] font-bold text-[#7C4DFF]">
+                    <span className="rounded-lg bg-[#FFF0E8] px-2.5 py-1 text-[9px] font-bold text-[#FF7A45]">
                       {lang === 'ka' ? 'დეტალები' : 'Details'}
                     </span>
                   </div>
@@ -700,430 +937,535 @@ export default function ChallengeView({
 
       {selectedChallenge &&
         (() => {
-          const isCompleted = playerRecord?.completedChallenges?.includes(
-            selectedChallenge.id
-          );
-          const isAccepted =
-            playerRecord?.acceptedChallenges?.includes(selectedChallenge.id) ||
-            isCompleted;
-          const isSkipped = playerRecord?.skippedChallenges?.includes(
-            selectedChallenge.id
-          );
-
-          const timing = playerRecord?.acceptedDates?.[selectedChallenge.id];
-          const expireAt =
-            typeof timing === 'string' ? timing : timing?.expireAt;
-          const takenAt =
-            typeof timing === 'string'
-              ? new Date(
-                  new Date(timing).getTime() - 3 * 24 * 60 * 60 * 1000
-                ).toISOString()
-              : timing?.takenAt || new Date().toISOString();
-
+          const status = getChallengeStatus(selectedChallenge);
+          const isCompleted = status.key === 'completed';
+          const isAccepted = status.key === 'active' || isCompleted;
+          const isSkipped = status.key === 'skipped';
+          const isExpired = status.key === 'expired';
           const needsFile = !isTextSubmission(selectedChallenge.submissionType);
+          const basePoints = getBaseChallengePoints(selectedChallenge);
 
           return (
-            <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/70 p-4 backdrop-blur-md">
-              <div className="relative max-h-[90vh] w-full max-w-xl space-y-4 overflow-y-auto rounded-3xl border border-violet-100 bg-white p-6 text-left shadow-2xl">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedChallenge(null);
-                    resetUploadForm();
-                  }}
-                  className="absolute right-4 top-4 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-slate-100 font-bold text-slate-400 hover:text-black"
-                >
-                  ✕
-                </button>
+            <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/75 p-4 backdrop-blur-md">
+              <div className="relative max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-[2rem] border border-violet-100 bg-white text-left shadow-2xl">
+                <div className="sticky top-0 z-10 border-b border-violet-100 bg-white/95 px-6 py-4 backdrop-blur-xl">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedChallenge(null);
+                      resetUploadForm();
+                    }}
+                    className="absolute right-4 top-4 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-slate-100 font-bold text-slate-400 hover:text-black"
+                  >
+                    ✕
+                  </button>
 
-                <h3 className="pr-6 text-sm font-black text-[#1E1B35]">
-                  {getChallengeTitle(selectedChallenge)}
-                </h3>
-
-                {isAccepted && timing && !isCompleted && (
-                  <div className="flex flex-col rounded-xl border border-purple-100 bg-purple-50 p-3 font-mono text-xs text-purple-950">
-                    <p>
-                      🕒 {lang === 'ka' ? 'აღების დრო:' : 'Accepted at:'}{' '}
-                      {new Date(takenAt).toLocaleString()}
+                  <div className="pr-10">
+                    <p className="mb-1 text-[10px] font-black uppercase tracking-[0.22em] text-[#7C4DFF]">
+                      {lang === 'ka' ? 'გამოწვევა' : 'Challenge'} #
+                      {selectedChallenge.challengeNumber || ''}
                     </p>
 
-                    <p className="mt-1 flex items-center gap-1.5 font-bold text-[#7C4DFF]">
-                      <Clock className="h-3.5 w-3.5 text-[#7C4DFF]" />
-                      {getDeadlineCountdown(expireAt)}
-                    </p>
+                    <h3 className="text-base font-black leading-snug text-[#1E1B35]">
+                      {getChallengeTitle(selectedChallenge)}
+                    </h3>
                   </div>
-                )}
+                </div>
 
-                <div className="space-y-3">
-                  <div className="space-y-2 rounded-xl border border-violet-50 bg-slate-50 p-4 text-xs leading-relaxed text-slate-700">
-                    <strong className="mb-1 block font-black text-[#7C4DFF]">
-                      {lang === 'ka'
-                        ? '📋 გამოწვევის აღწერა'
-                        : '📋 Challenge description'}
-                    </strong>
-
-                    <p className="whitespace-pre-wrap font-medium">
-                      {getChallengeDescription(selectedChallenge)}
-                    </p>
-
-                    {getChallengeInstructions(selectedChallenge) && (
-                      <p className="mt-2 whitespace-pre-wrap border-l-2 border-violet-200 pl-3 text-slate-500">
-                        {getChallengeInstructions(selectedChallenge)}
+                <div className="space-y-5 p-6">
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <div className="rounded-2xl border border-violet-100 bg-[#FAF8FF] p-3">
+                      <p className="text-[10px] font-black uppercase text-slate-400">
+                        {lang === 'ka' ? 'სირთულე' : 'Difficulty'}
                       </p>
-                    )}
+                      <p className="mt-1 text-sm font-black text-[#7C4DFF]">
+                        {getDifficultyLabel(selectedChallenge.difficulty, lang)}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-amber-100 bg-amber-50/50 p-3">
+                      <p className="text-[10px] font-black uppercase text-slate-400">
+                        {lang === 'ka' ? 'საბაზისო ქულა' : 'Base points'}
+                      </p>
+                      <p className="mt-1 text-sm font-black text-amber-600">
+                        +{basePoints}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
+                      <p className="text-[10px] font-black uppercase text-slate-400">
+                        {lang === 'ka' ? 'საჯაროობა' : 'Public proof'}
+                      </p>
+                      <p className="mt-1 text-sm font-black text-emerald-600">
+                        +{POINTS_CONFIG.publicBraveryBonus}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-rose-100 bg-rose-50 p-3">
+                      <p className="text-[10px] font-black uppercase text-slate-400">
+                        {lang === 'ka' ? 'აცილება' : 'Skip'}
+                      </p>
+                      <p className="mt-1 text-sm font-black text-rose-600">
+                        {POINTS_CONFIG.skippedChallengePenalty}
+                      </p>
+                    </div>
                   </div>
 
-                  {getSafetyRules(selectedChallenge) && (
-                    <div className="space-y-2 rounded-xl border border-violet-50 bg-slate-50 p-4 text-xs leading-relaxed text-slate-700">
-                      <strong className="mb-1 block font-black text-[#FF9B6A]">
+                  {isAccepted && selectedTiming && !isCompleted && (
+                    <div className="rounded-2xl border border-purple-100 bg-purple-50 p-4 font-mono text-xs text-purple-950">
+                      <p>
+                        🕒 {lang === 'ka' ? 'აღების დრო:' : 'Accepted at:'}{' '}
+                        {formatDateTime(selectedTiming.takenAt, lang)}
+                      </p>
+
+                      <p>
+                        ⏰ {lang === 'ka' ? 'დედლაინი:' : 'Deadline:'}{' '}
+                        {formatDateTime(selectedTiming.expireAt, lang)}
+                      </p>
+
+                      <p className="mt-2 flex items-center gap-1.5 font-bold text-[#7C4DFF]">
+                        <Clock className="h-3.5 w-3.5 text-[#7C4DFF]" />
+                        {formatDeadlineCountdown(selectedTiming.expireAt, lang)}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="grid gap-4 md:grid-cols-[1.15fr_0.85fr]">
+                    <div className="space-y-3 rounded-2xl border border-violet-50 bg-slate-50 p-4 text-xs leading-relaxed text-slate-700">
+                      <strong className="mb-1 block font-black text-[#7C4DFF]">
                         {lang === 'ka'
-                          ? '⚖️ უსაფრთხოების წესები'
-                          : '⚖️ Safety rules'}
+                          ? '📋 გამოწვევის აღწერა'
+                          : '📋 Challenge description'}
                       </strong>
 
-                      <div className="rounded-lg border-l-2 border-amber-300 bg-amber-50/40 p-2.5 text-[11px] italic text-amber-800">
-                        {getSafetyRules(selectedChallenge)}
+                      <p className="whitespace-pre-wrap font-medium">
+                        {getChallengeDescription(selectedChallenge)}
+                      </p>
+
+                      {getChallengeInstructions(selectedChallenge) && (
+                        <div className="mt-3 rounded-xl border-l-4 border-[#7C4DFF] bg-white p-3 text-slate-600">
+                          <strong className="mb-1 block text-[11px] font-black text-[#1E1B35]">
+                            {lang === 'ka' ? 'ინსტრუქცია' : 'Instructions'}
+                          </strong>
+
+                          <p className="whitespace-pre-wrap">
+                            {getChallengeInstructions(selectedChallenge)}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="rounded-2xl border border-[#7C4DFF]/10 bg-[#FAF8FF] p-4">
+                        <div className="mb-2 flex items-center gap-2">
+                          <Sparkles className="h-4 w-4 text-[#7C4DFF]" />
+                          <strong className="text-xs font-black text-[#1E1B35]">
+                            {lang === 'ka'
+                              ? 'ქულების გამჭვირვალობა'
+                              : 'Scoring preview'}
+                          </strong>
+                        </div>
+
+                        <pre className="whitespace-pre-wrap rounded-xl bg-white p-3 text-[11px] font-bold leading-relaxed text-slate-600">
+                          {getScoringText({
+                            challenge: selectedChallenge,
+                            visibility,
+                            expireAt: selectedTiming?.expireAt,
+                            lang,
+                          })}
+                        </pre>
+                      </div>
+
+                      <div className="rounded-2xl border border-amber-100 bg-amber-50/60 p-4">
+                        <div className="mb-2 flex items-center gap-2">
+                          <ShieldCheck className="h-4 w-4 text-amber-600" />
+                          <strong className="text-xs font-black text-amber-800">
+                            {lang === 'ka'
+                              ? 'უსაფრთხოების წესები'
+                              : 'Safety rules'}
+                          </strong>
+                        </div>
+
+                        <p className="text-[11px] font-medium leading-relaxed text-amber-800">
+                          {getSafetyRules(selectedChallenge)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {errorMessage && (
+                    <div className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-center text-[11px] font-bold text-rose-700">
+                      {errorMessage}
+                    </div>
+                  )}
+
+                  {currentUser ? (
+                    isAccepted && !isCompleted && !isExpired ? (
+                      <form
+                        onSubmit={handleFormSubmit}
+                        className="space-y-4 rounded-2xl border border-violet-100 bg-white p-4"
+                      >
+                        {message && (
+                          <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-2.5 text-center text-[11px] font-bold text-emerald-600">
+                            {message}
+                          </div>
+                        )}
+
+                        {needsFile && (
+                          <div className="space-y-4">
+                            <div
+                              onDragEnter={handleDrag}
+                              onDragOver={handleDrag}
+                              onDragLeave={handleDrag}
+                              onDrop={handleDrop}
+                              onClick={() => fileInputRef.current?.click()}
+                              className={`flex cursor-pointer flex-col items-center justify-center space-y-2 rounded-2xl border-2 border-dashed p-6 text-center transition-all hover:scale-[1.01] ${
+                                isDragActive
+                                  ? 'border-[#FF9B6A] bg-[#FFF0E8]/50'
+                                  : 'border-violet-200 bg-violet-50/15 hover:border-[#7C4DFF]'
+                              }`}
+                            >
+                              <div
+                                className={`flex h-10 w-10 items-center justify-center rounded-full transition-transform ${
+                                  isDragActive
+                                    ? 'bg-[#FF9B6A]/20 text-[#FF9B6A]'
+                                    : 'bg-violet-100/80 text-[#7C4DFF]'
+                                }`}
+                              >
+                                <UploadCloud className="h-5 w-5" />
+                              </div>
+
+                              <div>
+                                <p className="text-xs font-black text-[#1E1B35]">
+                                  {lang === 'ka'
+                                    ? isDragActive
+                                      ? 'გადმოუშვით ფაილი აქ!'
+                                      : 'ჩააგდეთ ან აირჩიეთ მედია ფაილი მოწყობილობიდან'
+                                    : isDragActive
+                                      ? 'Drop your file here!'
+                                      : 'Drag & drop or select a media file'}
+                                </p>
+
+                                <p className="mt-1 text-[10px] font-medium text-slate-400">
+                                  {lang === 'ka'
+                                    ? 'ვიდეო, აუდიო ან ფოტო'
+                                    : 'Video, audio or photo'}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => triggerFileInput('video')}
+                                className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2 text-xs font-bold transition-all ${
+                                  mediaType === 'video'
+                                    ? 'border-[#7C4DFF] bg-[#F1ECFF] text-[#7C4DFF]'
+                                    : 'border-violet-100 bg-white text-slate-500'
+                                }`}
+                              >
+                                <Video className="h-3.5 w-3.5" />
+                                {lang === 'ka' ? 'ვიდეო' : 'Video'}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => triggerFileInput('photo')}
+                                className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2 text-xs font-bold transition-all ${
+                                  mediaType === 'photo'
+                                    ? 'border-[#7C4DFF] bg-[#F1ECFF] text-[#7C4DFF]'
+                                    : 'border-violet-100 bg-white text-slate-500'
+                                }`}
+                              >
+                                <Camera className="h-3.5 w-3.5" />
+                                {lang === 'ka' ? 'ფოტო' : 'Photo'}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => triggerFileInput('audio')}
+                                className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2 text-xs font-bold transition-all ${
+                                  mediaType === 'audio'
+                                    ? 'border-[#7C4DFF] bg-[#F1ECFF] text-[#7C4DFF]'
+                                    : 'border-violet-100 bg-white text-slate-500'
+                                }`}
+                              >
+                                <Mic className="h-3.5 w-3.5" />
+                                {lang === 'ka' ? 'აუდიო' : 'Audio'}
+                              </button>
+                            </div>
+
+                            {filePreviewUrl && (
+                              <div className="relative flex max-h-56 items-center justify-center overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (filePreviewUrl) {
+                                      URL.revokeObjectURL(filePreviewUrl);
+                                    }
+
+                                    setFilePreviewUrl('');
+                                    setSelectedFile(null);
+                                  }}
+                                  className="absolute right-2 top-2 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-black/60 text-xs font-bold text-white hover:bg-black/90"
+                                >
+                                  ✕
+                                </button>
+
+                                {mediaType === 'video' && (
+                                  <video
+                                    src={filePreviewUrl}
+                                    controls
+                                    className="max-h-52 rounded-lg"
+                                  />
+                                )}
+
+                                {mediaType === 'photo' && (
+                                  <img
+                                    src={filePreviewUrl}
+                                    className="max-h-52 rounded-lg object-contain"
+                                    alt="Upload preview"
+                                  />
+                                )}
+
+                                {mediaType === 'audio' && (
+                                  <div className="w-full px-3 py-2 text-white">
+                                    <Volume2 className="mx-auto mb-2 h-6 w-6 animate-pulse text-[#7C4DFF]" />
+                                    <audio
+                                      src={filePreviewUrl}
+                                      controls
+                                      className="w-full"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <textarea
+                          required
+                          placeholder={
+                            lang === 'ka'
+                              ? 'ჩაწერეთ კომენტარი, რეფლექსია ან ემოცია...'
+                              : 'Write comment or reflection...'
+                          }
+                          value={comment}
+                          onChange={event => setComment(event.target.value)}
+                          className="h-20 w-full rounded-xl border border-violet-100 bg-[#FAF8FF] p-3 text-xs text-slate-800 focus:border-[#7C4DFF] focus:outline-none"
+                        />
+
+                        <div className="space-y-3 border-t border-violet-50 pt-2.5">
+                          <div className="flex items-center justify-between rounded-2xl border border-[#7C4DFF]/10 bg-[#FAF8FF] p-3 transition-all hover:border-[#7C4DFF]/25">
+                            <div className="flex items-start gap-2.5">
+                              <input
+                                id="public-consent"
+                                type="checkbox"
+                                checked={visibility === 'public'}
+                                onChange={event =>
+                                  setVisibility(
+                                    event.target.checked ? 'public' : 'hidden'
+                                  )
+                                }
+                                className="mt-1 h-4 w-4 cursor-pointer rounded border-violet-200 text-[#7C4DFF] focus:ring-[#7C4DFF]"
+                              />
+
+                              <label
+                                htmlFor="public-consent"
+                                className="cursor-pointer select-none text-left"
+                              >
+                                <span className="block text-xs font-black text-[#1E1B35]">
+                                  {lang === 'ka'
+                                    ? 'საჯაროობის ნებართვა და თანხმობა'
+                                    : 'Public sharing consent'}
+                                </span>
+
+                                <span className="mt-0.5 block text-[10px] font-medium text-slate-400">
+                                  {lang === 'ka'
+                                    ? 'ჩემი შესრულება გამოჩნდეს საჯარო სიმამაცის კედელზე'
+                                    : 'Display my submission on the public courage wall'}
+                                </span>
+                              </label>
+                            </div>
+
+                            <span className="shrink-0 rounded-full border border-[#FF9B6A]/10 bg-[#FFF0E8] px-2.5 py-1 text-[10px] font-black text-[#FF9B6A]">
+                              +{POINTS_CONFIG.publicBraveryBonus}{' '}
+                              {lang === 'ka' ? 'ქულა' : 'pts'}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 font-sans text-xs font-bold">
+                            <button
+                              type="button"
+                              onClick={() => setVisibility('public')}
+                              className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2.5 transition-all ${
+                                visibility === 'public'
+                                  ? 'border-emerald-500 bg-emerald-50 text-emerald-600 shadow-sm'
+                                  : 'border-violet-100 bg-white text-slate-400'
+                              }`}
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              {lang === 'ka'
+                                ? 'საჯარო კედელი'
+                                : 'Public wall'}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setVisibility('hidden')}
+                              className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2.5 transition-all ${
+                                visibility === 'hidden'
+                                  ? 'border-purple-300 bg-purple-50 text-[#7C4DFF] shadow-sm'
+                                  : 'border-violet-100 bg-white text-slate-400'
+                              }`}
+                            >
+                              <EyeOff className="h-3.5 w-3.5" />
+                              {lang === 'ka'
+                                ? 'პირად არქივში'
+                                : 'Private archive'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {selectedPointsPreview && (
+                          <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-center text-xs font-black text-emerald-700">
+                            {lang === 'ka'
+                              ? `ატვირთვის შემდეგ დაგერიცხებათ +${selectedPointsPreview.totalPoints} ქულა`
+                              : `After upload you will receive +${selectedPointsPreview.totalPoints} points`}
+                          </div>
+                        )}
+
+                        <div className="flex gap-2 pt-2">
+                          <button
+                            type="submit"
+                            disabled={isUploading}
+                            className="flex-1 cursor-pointer rounded-xl bg-[#7C4DFF] py-3 text-xs font-black uppercase text-white shadow-md shadow-[#7C4DFF]/30 transition-colors hover:bg-[#6c3df0] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            🚀{' '}
+                            {isUploading
+                              ? lang === 'ka'
+                                ? 'იტვირთება...'
+                                : 'Uploading...'
+                              : lang === 'ka'
+                                ? 'დაადასტურე და ატვირთე'
+                                : 'Confirm & upload'}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleSkipChallenge(selectedChallenge.id)}
+                            disabled={isUploading}
+                            className="cursor-pointer rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-600 transition-all hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {lang === 'ka'
+                              ? `აცილება (${POINTS_CONFIG.skippedChallengePenalty})`
+                              : `Skip (${POINTS_CONFIG.skippedChallengePenalty})`}
+                          </button>
+                        </div>
+                      </form>
+                    ) : isCompleted ? (
+                      <div className="flex items-center justify-center gap-1.5 rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-center text-xs font-bold text-emerald-700">
+                        <CheckCircle className="h-5 w-5 text-emerald-600" />
+                        {lang === 'ka'
+                          ? 'გამოწვევა უკვე წარმატებით შესრულებულია! 🎉'
+                          : 'Challenge is already completed! 🎉'}
+                      </div>
+                    ) : isExpired ? (
+                      <div className="rounded-xl border border-rose-100 bg-rose-50 p-4 text-center text-xs font-bold text-rose-700">
+                        {lang === 'ka'
+                          ? 'ამ გამოწვევის ვადა ამოიწურა. შეგიძლიათ აირჩიოთ სხვა გამოწვევა ან თავიდან მიიღოთ ეს გამოწვევა.'
+                          : 'The deadline for this challenge has expired. You can choose another challenge or accept this one again.'}
+
+                        <button
+                          type="button"
+                          onClick={() => handleAcceptChallenge(selectedChallenge.id)}
+                          disabled={isUploading}
+                          className="mt-3 rounded-xl bg-[#7C4DFF] px-4 py-2 text-[11px] font-black text-white"
+                        >
+                          {lang === 'ka'
+                            ? 'თავიდან მიღება'
+                            : 'Accept again'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 rounded-2xl border border-violet-100 bg-white p-4 text-center">
+                        {isSkipped && (
+                          <p className="rounded-lg bg-amber-50 p-2 text-center text-[11px] font-bold text-amber-600">
+                            ⚠️{' '}
+                            {lang === 'ka'
+                              ? 'თქვენ ერთხელ აიცილეთ ეს გამოწვევა, მაგრამ თავიდან მიღება კვლავ შეგიძლიათ.'
+                              : 'You skipped this, but you can accept it again.'}
+                          </p>
+                        )}
+
+                        <p className="text-xs font-medium text-slate-500">
+                          {lang === 'ka'
+                            ? 'გამოწვევის მიღების შემდეგ სისტემა დაგითვლით ზუსტ 72-საათიან დედლაინს.'
+                            : 'After accepting, the system will calculate your exact 72-hour deadline.'}
+                        </p>
+
+                        <div className="flex gap-3">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleAcceptChallenge(selectedChallenge.id)
+                            }
+                            disabled={isUploading}
+                            className="flex-1 cursor-pointer rounded-xl bg-[#7C4DFF] py-3 text-center text-xs font-black uppercase text-white shadow-lg shadow-[#7C4DFF]/20 transition-colors hover:bg-[#6c3df0] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            📋{' '}
+                            {lang === 'ka'
+                              ? 'მიიღე გამოწვევა'
+                              : 'Accept challenge'}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleSkipChallenge(selectedChallenge.id)}
+                            disabled={isUploading}
+                            className="cursor-pointer rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-600 transition-all hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {lang === 'ka'
+                              ? `აცილება (${POINTS_CONFIG.skippedChallengePenalty})`
+                              : `Skip (${POINTS_CONFIG.skippedChallengePenalty})`}
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  ) : (
+                    <div className="space-y-3 rounded-xl border border-purple-100 bg-purple-50 p-4 text-center text-xs font-medium text-purple-900">
+                      <p>
+                        {lang === 'ka'
+                          ? 'გამოწვევის მიღება და მტკიცებულების ატვირთვა შესაძლებელია ავტორიზაციის შემდეგ. გაცნობა შეგიძლიათ ახლავე.'
+                          : 'You can read the challenge now, but accepting and uploading proof requires sign in.'}
+                      </p>
+
+                      <div className="flex justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedChallenge(null);
+                            onStartLogin?.();
+                          }}
+                          className="cursor-pointer rounded-lg border border-[#7C4DFF] px-4 py-2 text-[10px] font-bold text-[#7C4DFF]"
+                        >
+                          {lang === 'ka' ? 'შესვლა' : 'Sign in'}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedChallenge(null);
+                            onStartRegister?.();
+                          }}
+                          className="cursor-pointer rounded-lg bg-[#7C4DFF] px-4 py-2 text-[10px] font-bold text-white"
+                        >
+                          {lang === 'ka' ? 'რეგისტრაცია' : 'Sign up'}
+                        </button>
                       </div>
                     </div>
                   )}
                 </div>
-
-                {errorMessage && (
-                  <div className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-center text-[11px] font-bold text-rose-700">
-                    {errorMessage}
-                  </div>
-                )}
-
-                {currentUser ? (
-                  isAccepted && !isCompleted ? (
-                    <form
-                      onSubmit={handleFormSubmit}
-                      className="space-y-4 border-t border-violet-100 pt-3"
-                    >
-                      {message && (
-                        <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-2.5 text-center text-[11px] font-bold text-emerald-600">
-                          {message}
-                        </div>
-                      )}
-
-                      {needsFile && (
-                        <div className="space-y-4">
-                          <div
-                            onDragEnter={handleDrag}
-                            onDragOver={handleDrag}
-                            onDragLeave={handleDrag}
-                            onDrop={handleDrop}
-                            onClick={() => fileInputRef.current?.click()}
-                            className={`flex cursor-pointer flex-col items-center justify-center space-y-2 rounded-2xl border-2 border-dashed p-6 text-center transition-all hover:scale-[1.01] ${
-                              isDragActive
-                                ? 'border-[#FF9B6A] bg-[#FFF0E8]/50'
-                                : 'border-violet-200 bg-violet-50/15 hover:border-[#7C4DFF]'
-                            }`}
-                          >
-                            <div
-                              className={`flex h-10 w-10 items-center justify-center rounded-full transition-transform ${
-                                isDragActive
-                                  ? 'bg-[#FF9B6A]/20 text-[#FF9B6A]'
-                                  : 'bg-violet-100/80 text-[#7C4DFF]'
-                              }`}
-                            >
-                              <UploadCloud className="h-5 w-5" />
-                            </div>
-
-                            <div>
-                              <p className="text-xs font-black text-[#1E1B35]">
-                                {lang === 'ka'
-                                  ? isDragActive
-                                    ? 'გადმოუშვით ფაილი აქ!'
-                                    : 'ჩააგდეთ ან აირჩიეთ მედია ფაილი მოწყობილობიდან'
-                                  : isDragActive
-                                    ? 'Drop your file here!'
-                                    : 'Drag & drop or select a media file'}
-                              </p>
-
-                              <p className="mt-1 text-[10px] font-medium text-slate-400">
-                                {lang === 'ka'
-                                  ? 'ვიდეო, აუდიო ან ფოტო'
-                                  : 'Video, audio or photo'}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-3 gap-2">
-                            <button
-                              type="button"
-                              onClick={() => triggerFileInput('video')}
-                              className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2 text-xs font-bold transition-all ${
-                                mediaType === 'video'
-                                  ? 'border-[#7C4DFF] bg-[#F1ECFF] text-[#7C4DFF]'
-                                  : 'border-violet-100 bg-white text-slate-500'
-                              }`}
-                            >
-                              <Video className="h-3.5 w-3.5" />
-                              {lang === 'ka' ? 'ვიდეო' : 'Video'}
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => triggerFileInput('photo')}
-                              className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2 text-xs font-bold transition-all ${
-                                mediaType === 'photo'
-                                  ? 'border-[#7C4DFF] bg-[#F1ECFF] text-[#7C4DFF]'
-                                  : 'border-violet-100 bg-white text-slate-500'
-                              }`}
-                            >
-                              <Camera className="h-3.5 w-3.5" />
-                              {lang === 'ka' ? 'ფოტო' : 'Photo'}
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => triggerFileInput('audio')}
-                              className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2 text-xs font-bold transition-all ${
-                                mediaType === 'audio'
-                                  ? 'border-[#7C4DFF] bg-[#F1ECFF] text-[#7C4DFF]'
-                                  : 'border-violet-100 bg-white text-slate-500'
-                              }`}
-                            >
-                              <Mic className="h-3.5 w-3.5" />
-                              {lang === 'ka' ? 'აუდიო' : 'Audio'}
-                            </button>
-                          </div>
-
-                          {filePreviewUrl && (
-                            <div className="relative flex max-h-48 items-center justify-center overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-3 text-center">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (filePreviewUrl) {
-                                    URL.revokeObjectURL(filePreviewUrl);
-                                  }
-
-                                  setFilePreviewUrl('');
-                                  setSelectedFile(null);
-                                }}
-                                className="absolute right-2 top-2 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-black/60 text-xs font-bold text-white hover:bg-black/90"
-                              >
-                                ✕
-                              </button>
-
-                              {mediaType === 'video' && (
-                                <video
-                                  src={filePreviewUrl}
-                                  controls
-                                  className="max-h-44 rounded-lg"
-                                />
-                              )}
-
-                              {mediaType === 'photo' && (
-                                <img
-                                  src={filePreviewUrl}
-                                  className="max-h-44 rounded-lg object-contain"
-                                  alt="Upload preview"
-                                />
-                              )}
-
-                              {mediaType === 'audio' && (
-                                <div className="w-full px-3 py-2 text-white">
-                                  <Volume2 className="mx-auto mb-2 h-6 w-6 animate-pulse text-[#7C4DFF]" />
-                                  <audio
-                                    src={filePreviewUrl}
-                                    controls
-                                    className="w-full"
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      <textarea
-                        required
-                        placeholder={
-                          lang === 'ka'
-                            ? 'ჩაწერეთ კომენტარი, რეფლექსია ან ემოცია...'
-                            : 'Write comment or reflection...'
-                        }
-                        value={comment}
-                        onChange={event => setComment(event.target.value)}
-                        className="h-16 w-full rounded-xl border border-violet-100 bg-[#FAF8FF] p-2.5 text-xs text-slate-800 focus:border-[#7C4DFF] focus:outline-none"
-                      />
-
-                      <div className="space-y-3 border-t border-violet-50 pt-2.5">
-                        <div className="flex items-center justify-between rounded-2xl border border-[#7C4DFF]/10 bg-[#FAF8FF] p-3 transition-all hover:border-[#7C4DFF]/25">
-                          <div className="flex items-start gap-2.5">
-                            <input
-                              id="public-consent"
-                              type="checkbox"
-                              checked={visibility === 'public'}
-                              onChange={event =>
-                                setVisibility(
-                                  event.target.checked ? 'public' : 'hidden'
-                                )
-                              }
-                              className="mt-1 h-4 w-4 cursor-pointer rounded border-violet-200 text-[#7C4DFF] focus:ring-[#7C4DFF]"
-                            />
-
-                            <label
-                              htmlFor="public-consent"
-                              className="cursor-pointer select-none text-left"
-                            >
-                              <span className="block text-xs font-black text-[#1E1B35]">
-                                {lang === 'ka'
-                                  ? 'საჯაროობის ნებართვა და თანხმობა'
-                                  : 'Public sharing consent'}
-                              </span>
-
-                              <span className="mt-0.5 block text-[10px] font-medium text-slate-400">
-                                {lang === 'ka'
-                                  ? 'ჩემი მონაწილეობა გამოჩნდეს საჯარო სიმამაცის კედელზე'
-                                  : 'Display my submission on the public wall'}
-                              </span>
-                            </label>
-                          </div>
-
-                          <span className="shrink-0 rounded-full border border-[#FF9B6A]/10 bg-[#FFF0E8] px-2.5 py-1 text-[10px] font-black text-[#FF9B6A]">
-                            +15 B
-                          </span>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2 font-sans text-xs font-bold">
-                          <button
-                            type="button"
-                            onClick={() => setVisibility('public')}
-                            className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2.5 transition-all ${
-                              visibility === 'public'
-                                ? 'border-emerald-500 bg-emerald-50 text-emerald-600 shadow-sm'
-                                : 'border-violet-100 bg-white text-slate-400'
-                            }`}
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                            {lang === 'ka'
-                              ? 'საჯარო კედელი'
-                              : 'Post to wall'}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => setVisibility('hidden')}
-                            className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2.5 transition-all ${
-                              visibility === 'hidden'
-                                ? 'border-purple-300 bg-purple-50 text-[#7C4DFF] shadow-sm'
-                                : 'border-violet-100 bg-white text-slate-400'
-                            }`}
-                          >
-                            <EyeOff className="h-3.5 w-3.5" />
-                            {lang === 'ka'
-                              ? 'პირად არქივში'
-                              : 'Private archive'}
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="flex gap-2 pt-2">
-                        <button
-                          type="submit"
-                          disabled={isUploading}
-                          className="flex-1 cursor-pointer rounded-xl bg-[#7C4DFF] py-3 text-xs font-black uppercase text-white shadow-md shadow-[#7C4DFF]/30 transition-colors hover:bg-[#6c3df0] disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          🚀{' '}
-                          {isUploading
-                            ? lang === 'ka'
-                              ? 'იტვირთება...'
-                              : 'Uploading...'
-                            : lang === 'ka'
-                              ? 'დაადასტურე და ატვირთე'
-                              : 'Confirm & send'}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleSkipChallenge(selectedChallenge.id)}
-                          disabled={isUploading}
-                          className="cursor-pointer rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-600 transition-all hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {lang === 'ka' ? 'აცილება (-3)' : 'Skip (-3)'}
-                        </button>
-                      </div>
-                    </form>
-                  ) : isCompleted ? (
-                    <div className="flex items-center justify-center gap-1.5 rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-center text-xs font-bold text-emerald-700">
-                      <CheckCircle className="h-5 w-5 text-emerald-600" />
-                      {lang === 'ka'
-                        ? 'გამოწვევა უკვე წარმატებით შესრულებულია! 🎉'
-                        : 'Challenge is already completed! 🎉'}
-                    </div>
-                  ) : (
-                    <div className="space-y-4 text-center">
-                      {isSkipped && (
-                        <p className="rounded-lg bg-amber-50 p-2 text-center text-[11px] font-bold text-amber-600">
-                          ⚠️{' '}
-                          {lang === 'ka'
-                            ? 'თქვენ ერთხელ აიცილეთ ეს გამოწვევა, მაგრამ ძალების მოსინჯვა კვლავ შეგიძლიათ!'
-                            : 'You skipped this, but you can retry!'}
-                        </p>
-                      )}
-
-                      <div className="flex gap-3">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleAcceptChallenge(selectedChallenge.id)
-                          }
-                          disabled={isUploading}
-                          className="flex-1 cursor-pointer rounded-xl bg-[#7C4DFF] py-3 text-center text-xs font-black uppercase text-white shadow-lg shadow-[#7C4DFF]/20 transition-colors hover:bg-[#6c3df0] disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          📋{' '}
-                          {lang === 'ka'
-                            ? 'მიიღე გამოწვევა და დაიცავი 3 დღიანი ვადა'
-                            : 'Accept challenge'}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleSkipChallenge(selectedChallenge.id)}
-                          disabled={isUploading}
-                          className="cursor-pointer rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-600 transition-all hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {lang === 'ka' ? 'აცილება (-3)' : 'Skip (-3)'}
-                        </button>
-                      </div>
-                    </div>
-                  )
-                ) : (
-                  <div className="space-y-3 rounded-xl border border-purple-100 bg-purple-50 p-4 text-center text-xs font-medium text-purple-900">
-                    <p>
-                      {lang === 'ka'
-                        ? 'მონაწილეობის მისაღებად და მტკიცებულების ასატვირთად გთხოვთ გაიაროთ ავტორიზაცია.'
-                        : 'Please sign in to accept this challenge and upload evidence.'}
-                    </p>
-
-                    <div className="flex justify-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedChallenge(null);
-                          onStartLogin?.();
-                        }}
-                        className="cursor-pointer rounded-lg border border-[#7C4DFF] px-4 py-2 text-[10px] font-bold text-[#7C4DFF]"
-                      >
-                        {lang === 'ka' ? 'შესვლა' : 'Sign in'}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedChallenge(null);
-                          onStartRegister?.();
-                        }}
-                        className="cursor-pointer rounded-lg bg-[#7C4DFF] px-4 py-2 text-[10px] font-bold text-white"
-                      >
-                        {lang === 'ka' ? 'რეგისტრაცია' : 'Sign up'}
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           );
