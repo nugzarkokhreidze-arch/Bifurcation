@@ -800,29 +800,28 @@ export default function LandingPage({
 
   return (
     <div className="min-h-screen w-full overflow-x-hidden bg-[#04020d] font-sans text-slate-100">
-      <section className="relative overflow-hidden bg-[#04020d] px-3 pb-12 pt-10 sm:px-6 sm:pb-16 sm:pt-14 md:px-10 lg:pb-24 lg:pt-20">
+      <section className="relative overflow-hidden bg-[#04020d] px-3 pb-16 pt-10 sm:px-6 sm:pb-20 sm:pt-14 md:px-10 lg:pb-28 lg:pt-20">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,#1c1544_0%,#050311_46%,#03010a_100%)]" />
         <div className="absolute left-[-8%] top-24 h-56 w-56 rounded-full bg-violet-700/20 blur-3xl" />
         <div className="absolute right-[-10%] top-36 h-64 w-64 rounded-full bg-fuchsia-600/15 blur-3xl" />
         <div className="absolute bottom-8 left-1/2 h-20 w-[72%] -translate-x-1/2 rounded-full bg-gradient-to-r from-violet-700/10 via-fuchsia-500/10 to-amber-500/10 blur-2xl" />
 
-        <div className="relative z-10 mx-auto max-w-7xl space-y-6 text-center sm:space-y-7">
-          <h1 className="relative mx-auto flex w-full max-w-full items-center justify-center overflow-visible py-3 sm:py-4">
+        <div className="relative z-10 mx-auto max-w-7xl space-y-7 text-center sm:space-y-8">
+          <h1 className="relative mx-auto flex w-full max-w-full items-center justify-center overflow-visible px-1 py-8 sm:py-10 md:py-12">
             <span
-              className="relative z-10 block whitespace-nowrap bg-gradient-to-r from-violet-500 via-fuchsia-500 to-amber-400 bg-clip-text text-center text-[clamp(2.45rem,9.5vw,7.6rem)] font-black leading-[0.92] tracking-[-0.035em] text-transparent drop-shadow-[0_0_22px_rgba(217,70,239,0.34)]"
+              className="relative z-10 block whitespace-nowrap bg-gradient-to-r from-violet-500 via-fuchsia-500 to-amber-400 bg-clip-text text-center text-[clamp(2.7rem,8.2vw,7.05rem)] font-black leading-[1.16] tracking-[-0.012em] text-transparent drop-shadow-[0_0_18px_rgba(217,70,239,0.32)]"
               style={{
                 fontFamily:
-                  'Inter, "Noto Sans Georgian", "Helvetica Neue", Arial, system-ui, sans-serif',
-                fontWeight: 950,
-                WebkitTextStroke: '0.35px rgba(255,255,255,0.08)',
+                  '"Noto Sans Georgian", "BPG Nino Mtavruli", "Arial Georgian", Sylfaen, Arial, system-ui, sans-serif',
+                fontWeight: 900,
                 textShadow:
-                  '0 0 18px rgba(168,85,247,0.38), 0 0 42px rgba(217,70,239,0.18), 0 12px 34px rgba(0,0,0,0.45)',
+                  '0 0 18px rgba(168,85,247,0.34), 0 0 34px rgba(217,70,239,0.16), 0 10px 30px rgba(0,0,0,0.42)',
               }}
             >
               {lang === 'ka' ? 'ბიფურკაცია' : 'Bifurcation'}
             </span>
 
-            <span className="absolute bottom-1 left-1/2 h-2 w-[86%] max-w-5xl -translate-x-1/2 rounded-full bg-gradient-to-r from-violet-600/60 via-fuchsia-500/55 to-amber-400/60 blur-md" />
+            <span className="pointer-events-none absolute bottom-5 left-1/2 h-2 w-[78%] max-w-4xl -translate-x-1/2 rounded-full bg-gradient-to-r from-violet-600/55 via-fuchsia-500/50 to-amber-400/55 blur-md sm:bottom-6" />
           </h1>
 
           <div className="mx-auto flex max-w-5xl items-stretch gap-3 text-left sm:gap-4">
