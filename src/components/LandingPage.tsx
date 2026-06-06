@@ -29,6 +29,7 @@ interface LandingPageProps {
     playerAvatar?: string;
     challengeTitle?: string;
   })[];
+  users?: User[];
   onStartRegister: () => void;
   onStartLogin: () => void;
   setCurrentTab: (tab: string) => void;
@@ -275,6 +276,7 @@ function buildChallengeLookup(marathons: any[]) {
 export default function LandingPage({
   currentUser,
   submissions,
+  users = [],
   onStartRegister,
   setCurrentTab,
   onVote,
@@ -311,14 +313,14 @@ export default function LandingPage({
 
     const map = new Map<string, any>();
 
-    [...localUsers, ...(localCurrentUser ? [localCurrentUser] : []), ...(currentUser ? [currentUser] : [])].forEach(
+    [...localUsers, ...users, ...(localCurrentUser ? [localCurrentUser] : []), ...(currentUser ? [currentUser] : [])].forEach(
       user => {
         if (user?.id) map.set(user.id, user);
       }
     );
 
     return Array.from(map.values());
-  }, [currentUser, tick]);
+  }, [currentUser, users, tick]);
 
   const allMarathons = useMemo(() => {
     const localMarathons = storageService.loadData<any[]>(
@@ -360,12 +362,19 @@ export default function LandingPage({
         const player = allUsers.find(user => user.id === submission.playerId);
         const challenge = challengeLookup.get(submission.challengeId);
 
+        const storedPlayerNickname =
+          submission.playerNickname || submission.player_nickname || '';
+
+        const isGenericPlayerName =
+          !storedPlayerNickname ||
+          ['მოთამაშე', 'Player', 'player', 'guest', 'სტუმარი'].includes(
+            String(storedPlayerNickname).trim()
+          );
+
         const playerNickname =
-          submission.playerNickname ||
-          submission.player_nickname ||
-          player?.nickname ||
-          player?.firstName ||
-          'მოთამაშე';
+          isGenericPlayerName
+            ? player?.nickname || player?.firstName || storedPlayerNickname || 'მოთამაშე'
+            : storedPlayerNickname;
 
         const playerAvatar =
           submission.playerAvatar ||
