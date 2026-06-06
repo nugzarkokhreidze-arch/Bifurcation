@@ -407,7 +407,7 @@ function mapSubmissionToRow(submission: any) {
       submission.publishToWall ?? submission.publish_to_wall ?? submission.visibility !== 'hidden',
     submission_type: submission.submissionType || (url.includes('tiktok') ? 'tiktok' : 'text'),
     file_url: submission.fileUrl || '',
-    video_url: submission.videoUrl || '',
+    video_url: submission.videoUrl || (url.includes('tiktok') ? url : ''),
     tiktok_url: submission.tiktokUrl || (url.includes('tiktok') ? url : ''),
     social_url: submission.socialUrl || url,
     external_url: submission.externalUrl || url,
