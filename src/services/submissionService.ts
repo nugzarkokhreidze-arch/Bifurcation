@@ -446,6 +446,58 @@ async function fetchCloudSubmissions() {
   }
 }
 
+function formatSupabaseError(error: any) {
+  if (!error) return 'Unknown Supabase error.';
+
+  if (error instanceof TypeError && String(error.message || '').includes('Failed to fetch')) {
+    return 'Supabase-თან კავშირი ვერ დამყარდა. გადაამოწმეთ ინტერნეტი, Vercel-ის ENV ცვლადები და Supabase API/RLS პარამეტრები.';
+  }
+
+  const parts = [
+    error.message,
+    error.details,
+    error.hint,
+    error.code ? `code: ${error.code}` : '',
+  ].filter(Boolean);
+
+  return parts.length ? parts.join(' | ') : String(error);
+}
+
+function wait(ms: number) {
+  return new Promise(resolve => window.setTimeout(resolve, ms));
+}
+
+async function insertOrUpdateSubmissionRow(row: any) {
+  // Insert-ს ვიყენებთ upsert-ის ნაცვლად, რადგან ზოგ Supabase/RLS გარემოში
+  // upsert() ზოგადი "Failed to fetch" შეცდომით ბრუნდება და რეალური მიზეზი იფარება.
+  const insertResult = await supabase
+    .from('submissions')
+    .insert(row)
+    .select()
+    .maybeSingle();
+
+  if (!insertResult.error) return insertResult.data;
+
+  const isDuplicate =
+    insertResult.error.code === '23505' ||
+    String(insertResult.error.message || '').toLowerCase().includes('duplicate');
+
+  if (!isDuplicate) {
+    throw insertResult.error;
+  }
+
+  const updateResult = await supabase
+    .from('submissions')
+    .update({ ...row, updated_at: new Date().toISOString() })
+    .eq('id', row.id)
+    .select()
+    .maybeSingle();
+
+  if (updateResult.error) throw updateResult.error;
+
+  return updateResult.data;
+}
+
 async function upsertCloudSubmission(submission: any) {
   const row = mapSubmissionToRow(submission);
 
@@ -453,15 +505,24 @@ async function upsertCloudSubmission(submission: any) {
     throw new Error('Cloud sync requires a Supabase-authenticated player id. Please log in again with your email and password.');
   }
 
-  const { data, error } = await supabase
-    .from('submissions')
-    .upsert(row, { onConflict: 'id' })
-    .select()
-    .maybeSingle();
+  try {
+    const data = await insertOrUpdateSubmissionRow(row);
+    return data ? mapRowToSubmission(data) : submission;
+  } catch (firstError: any) {
+    // მოკლე retry დროებითი ქსელური ჩავარდნისთვის.
+    if (firstError instanceof TypeError && String(firstError.message || '').includes('Failed to fetch')) {
+      await wait(900);
 
-  if (error) throw error;
+      try {
+        const data = await insertOrUpdateSubmissionRow(row);
+        return data ? mapRowToSubmission(data) : submission;
+      } catch (secondError: any) {
+        throw new Error(formatSupabaseError(secondError));
+      }
+    }
 
-  return data ? mapRowToSubmission(data) : submission;
+    throw new Error(formatSupabaseError(firstError));
+  }
 }
 
 async function updateCloudSubmission(submission: any) {
