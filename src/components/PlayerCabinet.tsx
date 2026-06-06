@@ -134,48 +134,294 @@ function normalizeTikTokUrl(url: string) {
 }
 
 function createGuideAnswer(question: string, lang: 'ka' | 'en' = 'ka') {
-  const text = question.toLowerCase();
+  const raw = question.trim();
+  const text = raw.toLowerCase();
 
-  if (lang === 'en') {
-    if (text.includes('tiktok') || text.includes('link')) {
-      return 'Upload your challenge video to TikTok, copy the public video link, return to the challenge and paste it into the TikTok link field. Then press confirm.';
-    }
+  const hasAny = (words: string[]) => words.some(word => text.includes(word));
 
-    if (text.includes('point') || text.includes('score')) {
-      return 'Your points come from completing challenges, receiving unique support, views and comments on the website. Donations never change points or ranking.';
-    }
+  const isKa = lang === 'ka';
 
-    if (text.includes('problem') || text.includes('error') || text.includes('not working')) {
-      return 'Try refreshing the page, check that your TikTok link is public, and make sure you are logged into your cabinet. If it still fails, describe exactly which button does not work.';
-    }
+  const answer = (ka: string, en: string) => (isKa ? ka : en);
 
-    return 'I am here to help you move step by step. Read the challenge carefully, choose a safe and creative idea, record your TikTok proof, and return here to submit the link.';
-  }
-
-  if (text.includes('tiktok') || text.includes('ტიკტოკ') || text.includes('ბმულ')) {
-    return 'გააკეთე ასე: გადაიღე გამოწვევის ვიდეო, ატვირთე TikTok-ზე საჯაროდ, დააკოპირე ვიდეოს ბმული, დაბრუნდი გამოწვევაში და ჩასვი TikTok ბმულის ველში. შემდეგ დააჭირე დადასტურებას.';
-  }
-
-  if (text.includes('ქულ') || text.includes('რეიტინგ')) {
-    return 'ქულები გემატება გამოწვევის შესრულებისთვის, საიტზე უნიკალური ნახვებისთვის, მხარდაჭერისთვის და კომენტარებისთვის. დონაცია ქულებსა და რეიტინგზე არ მოქმედებს — ის მხოლოდ პროექტის მხარდაჭერაა.';
+  if (!raw) {
+    return answer(
+      'მომწერე კითხვა ერთი წინადადებით და მე ნაბიჯ-ნაბიჯ დაგეხმარები.',
+      'Write your question in one sentence and I will help you step by step.'
+    );
   }
 
   if (
-    text.includes('პრობლ') ||
-    text.includes('შეცდომ') ||
-    text.includes('არ მუშაობ') ||
-    text.includes('ვერ')
+    hasAny([
+      'tiktok',
+      'ტიკტოკ',
+      'ბმულ',
+      'ლინკ',
+      'ვიდეო',
+      'ატვირთ',
+      'proof',
+      'submit',
+      'link',
+      'upload',
+    ])
   ) {
-    return 'პირველი ნაბიჯი: განაახლე გვერდი. შემდეგ შეამოწმე, რომ შესული ხარ შენს კაბინეტში და TikTok ბმული საჯაროა. თუ ისევ არ იმუშავებს, მომწერე ზუსტად რომელი ღილაკი არ რეაგირებს და რა ჩანს ეკრანზე.';
+    return answer(
+      [
+        'კი, დაგეხმარები. TikTok ბმულის დასადასტურებლად გააკეთე ასე:',
+        '1) ჯერ გამოწვევა გახსენი და დააჭირე „მიიღე გამოწვევა“.',
+        '2) ვიდეო გადაიღე უსაფრთხოდ და ატვირთე TikTok-ზე საჯაროდ.',
+        '3) TikTok-იდან დააკოპირე ვიდეოს ბმული. უკეთესია სრული ბმული /@username/video/... ფორმატით.',
+        '4) დაბრუნდი საიტზე, გახსენი იგივე გამოწვევა და ჩასვი ბმული TikTok ველში.',
+        '5) დააჭირე „დაადასტურე TikTok ბმულით“.',
+        'თუ ბმული არ ჩანს კედელზე, განაახლე გვერდი და გადაამოწმე, რომ შესული ხარ იმავე კაბინეტში.',
+      ].join('\n'),
+      [
+        'Sure. To submit a TikTok proof:',
+        '1) Open the challenge and press “Accept challenge”.',
+        '2) Record your video safely and publish it publicly on TikTok.',
+        '3) Copy the TikTok video link. A full /@username/video/... link works best.',
+        '4) Return to the same challenge and paste the link into the TikTok field.',
+        '5) Press “Confirm with TikTok link”.',
+        'If it does not appear on the wall, refresh the page and make sure you are logged into the same cabinet.',
+      ].join('\n')
+    );
   }
 
-  if (text.includes('იდეა') || text.includes('როგორ')) {
-    return 'აირჩიე მარტივი, უსაფრთხო და კრეატიული გადაწყვეტა. კარგი ვიდეო არ უნდა იყოს საშიში ან დამამცირებელი — მთავარია იდეა, გულწრფელობა და შესრულების სითამამე.';
+  if (
+    hasAny([
+      'ქულ',
+      'ბალანს',
+      'რეიტინგ',
+      'ლიდერ',
+      'გული',
+      'მოწონ',
+      'ნახვ',
+      'კომენტ',
+      'score',
+      'point',
+      'rating',
+      'ranking',
+      'leader',
+      'like',
+      'view',
+      'comment',
+    ])
+  ) {
+    return answer(
+      [
+        'ქულების ლოგიკა ასეთია:',
+        '• გამოწვევის შესრულება გაძლევს საბაზისო ქულას.',
+        '• დროულად შესრულება გაძლევს დამატებით ბონუსს.',
+        '• საიტზე უნიკალური ნახვები, გულები და კომენტარები ზრდის აქტივობის ქულებს.',
+        '• ერთი ადამიანი ერთ პოსტზე ერთჯერადად ითვლება, რომ რეიტინგი სამართლიანი იყოს.',
+        '• საკუთარი პოსტის მოწონება ქულას არ გაძლევს.',
+        '• დონაცია ქულებსა და რეიტინგზე არ მოქმედებს.',
+        'რეიტინგში უნდა ჩანდეს ყველაზე მაღალი ქულის მქონე აქტიური მოთამაშეები, არა მხოლოდ ის ხალხი, ვინც იმ წამს საიტზეა.',
+      ].join('\n'),
+      [
+        'The scoring works like this:',
+        '• Completing a challenge gives base points.',
+        '• Completing it before the deadline adds a bonus.',
+        '• Unique website views, hearts and comments add engagement points.',
+        '• Each person counts once per post to keep ranking fair.',
+        '• Liking your own post does not give points.',
+        '• Donations never affect points or ranking.',
+      ].join('\n')
+    );
   }
 
-  return 'მე აქ ვარ, რომ დაგეხმარო ნაბიჯ-ნაბიჯ. წაიკითხე გამოწვევა მშვიდად, მოიფიქრე უსაფრთხო იდეა, გადაიღე TikTok proof და დაბრუნდი საიტზე ბმულის ჩასასმელად. შენ შეგიძლია!';
+  if (
+    hasAny([
+      'ვერ',
+      'არ მუშაობ',
+      'შეცდომ',
+      'გაჭედ',
+      'ჭედ',
+      'ნელი',
+      'არ ჩანს',
+      'არ იხსნება',
+      'პრობლ',
+      'error',
+      'problem',
+      'bug',
+      'slow',
+      'stuck',
+      'not working',
+      'does not work',
+      'not visible',
+    ])
+  ) {
+    return answer(
+      [
+        'მოდი ტექნიკური პრობლემა მშვიდად გადავამოწმოთ:',
+        '1) ჯერ გვერდი განაახლე.',
+        '2) შეამოწმე, რომ შესული ხარ სწორ კაბინეტში.',
+        '3) თუ TikTok ვიდეო არ იხსნება, დააჭირე „TikTok-ზე ნახვა“ — ზოგ ვიდეოს embed-ს TikTok თვითონ ზღუდავს.',
+        '4) თუ კომენტარი/გული არ ემატება, სცადე სხვა ანგარიშით ან სტუმრის რეჟიმით; საკუთარ პოსტზე გული არ ითვლება.',
+        '5) თუ საიტი შენელდა, დახურე ზედმეტი ფანჯრები და დატოვე მხოლოდ ერთი საიტის tab.',
+        'მომწერე ზუსტად რა ღილაკს აჭერ და რა ხდება ეკრანზე — გეტყვი შემდეგ ნაბიჯს.',
+      ].join('\n'),
+      [
+        'Let’s troubleshoot step by step:',
+        '1) Refresh the page.',
+        '2) Make sure you are logged into the correct cabinet.',
+        '3) If TikTok does not embed, use “Open on TikTok” — some videos are restricted by TikTok.',
+        '4) If hearts/comments do not update, try another account or guest mode; your own post cannot receive points from your own heart.',
+        '5) If the site slows down, close extra tabs and keep one game tab open.',
+        'Tell me exactly which button you click and what happens on screen.',
+      ].join('\n')
+    );
+  }
+
+  if (
+    hasAny([
+      'იდეა',
+      'როგორ გადავიღო',
+      'რა გადავიღო',
+      'შთაგონ',
+      'კრეატ',
+      'challenge idea',
+      'idea',
+      'creative',
+      'inspiration',
+    ])
+  ) {
+    return answer(
+      [
+        'აი უსაფრთხო და კრეატიული მიდგომა:',
+        '1) აირჩიე იდეა, რომელიც არ არის საშიში და არავის ამცირებს.',
+        '2) ვიდეო დაიწყე მოკლე კადრით: „მე ვიღებ ამ გამოწვევას“.',
+        '3) აჩვენე პროცესი 2–3 მოკლე სცენით.',
+        '4) ბოლოს დაამატე დასკვნა: რა ისწავლე, რა გაგიჭირდა ან რა გაგამხნევა.',
+        '5) თუ არ ხარ დარწმუნებული, აირჩიე უფრო მარტივი ვერსია — ხარისხი და გულწრფელობა უფრო მნიშვნელოვანია, ვიდრე რისკი.',
+      ].join('\n'),
+      [
+        'Here is a safe creative structure:',
+        '1) Choose an idea that is not risky or humiliating.',
+        '2) Start with a short line: “I accept this challenge”.',
+        '3) Show the process in 2–3 short scenes.',
+        '4) End with what you learned or what encouraged you.',
+        '5) When unsure, choose a simpler version — sincerity matters more than risk.',
+      ].join('\n')
+    );
+  }
+
+  if (
+    hasAny([
+      'მეშინ',
+      'მოტივ',
+      'არ შემიძლია',
+      'დავიღალე',
+      'დამეხმარე',
+      'გამბედაობ',
+      'fear',
+      'motivation',
+      'tired',
+      'confidence',
+      'brave',
+      'courage',
+    ])
+  ) {
+    return answer(
+      [
+        'შენ არ გჭირდება იდეალური შესრულება — გჭირდება პატარა, უსაფრთხო ნაბიჯი.',
+        'აი მარტივი ფორმულა:',
+        '1) შეამცირე გამოწვევა ყველაზე პატარა მოქმედებამდე.',
+        '2) გააკეთე 10-წამიანი საცდელი ვიდეო, თუნდაც არ ატვირთო.',
+        '3) აირჩიე მშვიდი გარემო და ისეთი ფორმა, სადაც თავს დაცულად გრძნობ.',
+        '4) გახსოვდეს: ამ თამაშში მიზანი საკუთარი ზრდაა, არა სხვებთან შედარება.',
+        'შენ შეგიძლია ნელა, ღირსეულად და შენს ტემპში.',
+      ].join('\n'),
+      [
+        'You do not need a perfect performance — you need one safe small step.',
+        'Try this:',
+        '1) Reduce the challenge to the smallest action.',
+        '2) Record a 10-second test video, even if you do not upload it.',
+        '3) Choose a calm setting where you feel safe.',
+        '4) The goal is growth, not comparison.',
+        'You can move at your own pace.',
+      ].join('\n')
+    );
+  }
+
+  if (
+    hasAny([
+      'უსაფრთხ',
+      'რისკ',
+      'საფრთხ',
+      'შეიძლება თუ არა',
+      'დაშავ',
+      'safe',
+      'safety',
+      'risk',
+      'danger',
+      'allowed',
+    ])
+  ) {
+    return answer(
+      [
+        'უსაფრთხოების წესი ასეთია:',
+        '• არ გააკეთო არაფერი, რაც შეიძლება დაგაზიანოს შენ ან სხვას.',
+        '• არ გადაიღო ადამიანი მისი თანხმობის გარეშე.',
+        '• არ გამოიყენო დამამცირებელი, შეურაცხმყოფელი ან სარისკო მოქმედება.',
+        '• თუ იდეა ოდნავ მაინც სახიფათოდ გეჩვენება, შეცვალე უფრო მშვიდი და სიმბოლური ფორმით.',
+        'კარგი გამოწვევა არის გაბედული, მაგრამ არა სახიფათო.',
+      ].join('\n'),
+      [
+        'Safety rule:',
+        '• Do nothing that can harm you or others.',
+        '• Do not film people without consent.',
+        '• Avoid humiliating, offensive or risky actions.',
+        '• If an idea feels even slightly unsafe, change it into a calmer symbolic version.',
+        'A good challenge is brave, not dangerous.',
+      ].join('\n')
+    );
+  }
+
+  if (
+    hasAny([
+      'დონაცი',
+      'პრიზ',
+      'ფული',
+      'გადახდ',
+      'donation',
+      'prize',
+      'money',
+      'pay',
+    ])
+  ) {
+    return answer(
+      [
+        'თამაში უფასოა. ფულადი პრიზი უკავშირდება თამაშის შედეგებს და არა გადახდას.',
+        'დონაცია არის მხოლოდ ნებაყოფლობითი მხარდაჭერა — ის არ ზრდის ქულებს, არ ცვლის რეიტინგს და არ გაძლევს უპირატესობას.',
+        'დონაციით ეხმარები თამაშის გაგრძელებას, პრიზის მხარდაჭერას, საიტის გაუმჯობესებას და ახალი ახალგაზრდული/საგანმანათლებლო პროგრამების შექმნას. მხარდაჭერა კეთდება მხოლოდ სურვილით და არასოდეს არის თამაშში მონაწილეობის პირობა.',
+      ].join('\n'),
+      [
+        'The game is free. The cash prize is based on game results, not payment.',
+        'Donations are voluntary support only — they do not increase points, change ranking or give advantage.',
+        'Donations help keep the game running and support future educational programs.',
+      ].join('\n')
+    );
+  }
+
+  return answer(
+    [
+      'მესმის. ამ კითხვაზე ასე გიპასუხებ:',
+      '1) ჯერ დააზუსტე, რას გინდა მიაღწიო — გამოწვევის შესრულება, ტექნიკური პრობლემის მოგვარება, იდეის მოფიქრება თუ ქულების გაგება.',
+      '2) თუ საქმე გამოწვევას ეხება, დაიწყე უსაფრთხო და მარტივი ვარიანტით.',
+      '3) თუ ტექნიკური პრობლემაა, მომწერე რომელი ღილაკი არ მუშაობს ან რა შეტყობინება ჩანს.',
+      '4) თუ იდეა გჭირდება, შემიძლია მოგცე 3 უსაფრთხო სცენარი.',
+      'მომწერე ერთი დამატებითი დეტალი და უფრო ზუსტ პასუხს მოგცემ.',
+    ].join('\n'),
+    [
+      'I understand. Here is the best next step:',
+      '1) Clarify what you want: complete a challenge, fix a technical issue, find an idea, or understand points.',
+      '2) If it is about a challenge, start with a safe and simple version.',
+      '3) If it is technical, tell me which button fails or what message you see.',
+      '4) If you need an idea, I can give you 3 safe scenarios.',
+      'Send one more detail and I will answer more precisely.',
+    ].join('\n')
+  );
 }
-
 function getSubmissionKey(submission: any) {
   return (
     submission.id ||
@@ -287,7 +533,7 @@ export default function PlayerCabinet({
       role: 'guide',
       text:
         lang === 'ka'
-          ? 'გამარჯობა! მე ვარ შენი AI მეგზური. შემიძლია დაგეხმარო საიტის გამოყენებაში, გამოწვევის იდეებში, მოტივაციაში და ტექნიკური პრობლემების ნაბიჯ-ნაბიჯ მოგვარებაში.'
+          ? 'გამარჯობა! მე ვარ შენი AI მეგზური. შემიძლია დაგეხმარო საიტის გამოყენებაში, გამოწვევის იდეებში, მოტივაციაში, ტექნიკური პრობლემების ნაბიჯ-ნაბიჯ მოგვარებაში და ასევე აგიხსნა ფულადი პრიზისა და ნებაყოფლობითი დონაციის წესები.'
           : 'Hi! I am your AI guide. I can help with navigation, challenge ideas, motivation and step-by-step troubleshooting.',
     },
   ]);
