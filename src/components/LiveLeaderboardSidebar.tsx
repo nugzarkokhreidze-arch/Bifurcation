@@ -179,7 +179,7 @@ export default function LiveLeaderboardSidebar({
   }, [players, records, submissions, currentUser, lang]);
 
   return (
-    <div className="w-full shrink-0 select-none rounded-3xl border border-violet-900/40 bg-[#131129] p-5 text-white shadow-xl lg:w-72">
+    <div className="w-full shrink-0 select-none rounded-2xl border border-violet-900/40 bg-[#131129] p-4 text-white shadow-xl sm:rounded-3xl sm:p-5 lg:w-72">
       <div className="flex items-center justify-between border-b border-violet-950 pb-3 text-left">
         <div className="flex items-center gap-2">
           <Trophy className="h-4 w-4 fill-amber-400 text-amber-400" />
@@ -200,7 +200,7 @@ export default function LiveLeaderboardSidebar({
         </span>
       </div>
 
-      <div className="mt-4 space-y-2">
+      <div className="mt-3 space-y-2 sm:mt-4">
         {rankedPlayers.length === 0 ? (
           <div className="rounded-2xl border border-violet-950/60 bg-[#0d0b21]/70 p-4 text-center">
             <p className="text-[11px] font-bold text-slate-400">
