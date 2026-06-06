@@ -447,42 +447,36 @@ async function fetchCloudSubmissions() {
 }
 
 async function upsertCloudSubmission(submission: any) {
-  try {
-    const row = mapSubmissionToRow(submission);
+  const row = mapSubmissionToRow(submission);
 
-    const { data, error } = await supabase
-      .from('submissions')
-      .upsert(row, { onConflict: 'id' })
-      .select()
-      .maybeSingle();
-
-    if (error) throw error;
-
-    return data ? mapRowToSubmission(data) : submission;
-  } catch (error) {
-    console.warn('Supabase submission save failed. Local copy is kept:', error);
-    return submission;
+  if (!row.player_id) {
+    throw new Error('Cloud sync requires a Supabase-authenticated player id. Please log in again with your email and password.');
   }
+
+  const { data, error } = await supabase
+    .from('submissions')
+    .upsert(row, { onConflict: 'id' })
+    .select()
+    .maybeSingle();
+
+  if (error) throw error;
+
+  return data ? mapRowToSubmission(data) : submission;
 }
 
 async function updateCloudSubmission(submission: any) {
-  try {
-    const row = mapSubmissionToRow(submission);
+  const row = mapSubmissionToRow(submission);
 
-    const { data, error } = await supabase
-      .from('submissions')
-      .update(row)
-      .eq('id', submission.id)
-      .select()
-      .maybeSingle();
+  const { data, error } = await supabase
+    .from('submissions')
+    .update(row)
+    .eq('id', submission.id)
+    .select()
+    .maybeSingle();
 
-    if (error) throw error;
+  if (error) throw error;
 
-    return data ? mapRowToSubmission(data) : submission;
-  } catch (error) {
-    console.warn('Supabase submission update failed. Local copy is kept:', error);
-    return submission;
-  }
+  return data ? mapRowToSubmission(data) : submission;
 }
 
 async function updateCloudPlayerPoints(playerId: string, amount: number) {
@@ -616,7 +610,13 @@ export const submissionService = {
       hasAttemptedInitialCloudSync = true;
 
       for (const submission of localSubmissions.slice(0, 100)) {
-        await upsertCloudSubmission(submission);
+        if (!isUuid(submission.playerId || submission.userId)) continue;
+
+        try {
+          await upsertCloudSubmission(submission);
+        } catch (error) {
+          console.warn('Local submission could not be synced to cloud:', error);
+        }
       }
     }
 
@@ -633,7 +633,13 @@ export const submissionService = {
     const synced: any[] = [];
 
     for (const submission of localSubmissions) {
-      synced.push(await upsertCloudSubmission(submission));
+      if (!isUuid(submission.playerId || submission.userId)) continue;
+
+      try {
+        synced.push(await upsertCloudSubmission(submission));
+      } catch (error) {
+        console.warn('Submission sync skipped:', error);
+      }
     }
 
     const cloudSubmissions = await fetchCloudSubmissions();
@@ -720,11 +726,8 @@ export const submissionService = {
       updatedAt: now,
     };
 
-    const localNext = mergeSubmissions([submission], loadAllLocalSubmissions());
-    saveAllLocalSubmissions(localNext);
-
     const cloudSubmission = await upsertCloudSubmission(submission);
-    const merged = mergeSubmissions([cloudSubmission], localNext);
+    const merged = mergeSubmissions([cloudSubmission], loadAllLocalSubmissions());
     saveAllLocalSubmissions(merged);
 
     return cloudSubmission as Submission;
