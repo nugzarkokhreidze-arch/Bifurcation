@@ -715,7 +715,7 @@ export default function LandingPage({
 
     if (videoId) {
       return (
-        <div className="mx-auto h-[620px] w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-black">
+        <div className="mx-auto h-[48vh] min-h-[300px] max-h-[460px] w-full max-w-[320px] overflow-hidden rounded-2xl border border-slate-200 bg-black">
           <iframe
             src={`https://www.tiktok.com/embed/v2/${videoId}`}
             title="TikTok video"
@@ -1218,12 +1218,12 @@ export default function LandingPage({
           const voteCount = likedBy.length || liveActiveSub.votes || 0;
 
           return (
-            <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
-              <div className="relative w-full max-w-2xl space-y-4 rounded-3xl border bg-white p-5 text-left shadow-2xl">
+            <div className="fixed inset-0 z-[55] flex items-start justify-center overflow-y-auto bg-black/80 p-3 pt-6 backdrop-blur-md sm:p-5 sm:pt-8">
+              <div className="relative max-h-[88vh] w-full max-w-xl space-y-3 overflow-y-auto rounded-3xl border bg-white p-4 text-left shadow-2xl sm:p-5">
                 <button
                   type="button"
                   onClick={() => setActiveMediaSub(null)}
-                  className="absolute right-4 top-4 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-slate-100 font-bold text-slate-400 hover:text-black"
+                  className="absolute right-3 top-3 z-30 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-slate-100 font-bold text-slate-500 shadow-sm hover:text-black"
                 >
                   ✕
                 </button>
@@ -1253,7 +1253,7 @@ export default function LandingPage({
                   </div>
                 </div>
 
-                <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-2xl bg-black">
+                <div className="relative flex min-h-[280px] max-h-[50vh] items-center justify-center overflow-hidden rounded-2xl bg-black">
                   {renderSubmissionMedia(liveActiveSub, 'modal')}
                 </div>
 
