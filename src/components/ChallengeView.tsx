@@ -128,6 +128,12 @@ function formatDateTime(value?: string, lang: 'ka' | 'en' = 'ka') {
   });
 }
 
+function getFallbackAvatar(nickname: string) {
+  return `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(
+    nickname || 'player'
+  )}`;
+}
+
 export default function ChallengeView({
   currentUser,
   onStateUpdate,
@@ -393,6 +399,67 @@ export default function ChallengeView({
     });
   }
 
+  function saveWallReadySubmission(params: {
+    savedSubmission: any;
+    challenge: Challenge;
+    submissionType: ChallengeSubmissionType | MediaType;
+    visibility: 'public' | 'hidden';
+    comment: string;
+  }) {
+    if (!currentUser) return params.savedSubmission;
+
+    const publishToWall = params.visibility === 'public';
+    const fileUrl =
+      params.savedSubmission.fileUrl ||
+      params.savedSubmission.videoUrl ||
+      params.savedSubmission.file_url ||
+      params.savedSubmission.video_url ||
+      '';
+
+    const wallReadySubmission = {
+      ...params.savedSubmission,
+      playerId: currentUser.id,
+      challengeId: params.challenge.id,
+      marathonId: normalizeMarathonId(selectedMarathonId),
+      submissionType: params.submissionType,
+      visibility: publishToWall ? 'public' : 'hidden',
+      publishToWall,
+      publish_to_wall: publishToWall,
+      approved: true,
+      playerNickname: currentUser.nickname || currentUser.firstName || 'მოთამაშე',
+      playerAvatar:
+        currentUser.avatar ||
+        getFallbackAvatar(currentUser.nickname || currentUser.email || currentUser.id),
+      challengeTitle: getChallengeTitle(params.challenge),
+      comment: params.comment,
+      reflectionText: params.comment,
+      textDescription: params.comment,
+      fileUrl,
+      videoUrl: fileUrl,
+      likedBy: params.savedSubmission.likedBy || [],
+      votedUserIds: params.savedSubmission.votedUserIds || [],
+      votes: params.savedSubmission.votes || 0,
+      likes: params.savedSubmission.likes || 0,
+      createdAt: params.savedSubmission.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const cachedSubmissions = storageService.loadData<any[]>(
+      storageKeys.submissions,
+      []
+    );
+
+    storageService.saveData(
+      storageKeys.submissions,
+      [
+        wallReadySubmission,
+        ...cachedSubmissions.filter(item => item.id !== wallReadySubmission.id),
+      ]
+    );
+
+    return wallReadySubmission;
+  }
+
   async function handleAcceptChallenge(challengeId: string) {
     if (!currentUser) {
       if (onStartRegister) {
@@ -420,9 +487,7 @@ export default function ChallengeView({
       const marathonId = normalizeMarathonId(selectedMarathonId);
       const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
 
-      const alreadyCompleted = record.completedChallenges.includes(challengeId);
-
-      if (alreadyCompleted) {
+      if (record.completedChallenges.includes(challengeId)) {
         setMessage(
           lang === 'ka'
             ? 'ეს გამოწვევა უკვე შესრულებულია.'
@@ -500,7 +565,10 @@ export default function ChallengeView({
         challengeId
       );
 
-      record.points = Math.max(0, (record.points || currentUser.points || 0) + penalty);
+      record.points = Math.max(
+        0,
+        (record.points || currentUser.points || 0) + penalty
+      );
 
       addPointHistory(record, {
         challengeId,
@@ -555,7 +623,10 @@ export default function ChallengeView({
 
     record.expiredChallenges = uniqueList(record.expiredChallenges, challengeId);
     record.acceptedChallenges = removeFromList(record.acceptedChallenges, challengeId);
-    record.points = Math.max(0, (record.points || currentUser.points || 0) + penalty);
+    record.points = Math.max(
+      0,
+      (record.points || currentUser.points || 0) + penalty
+    );
 
     addPointHistory(record, {
       challengeId,
@@ -584,11 +655,7 @@ export default function ChallengeView({
     const marathonId = normalizeMarathonId(selectedMarathonId);
     const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
 
-    const alreadyCompleted = record.completedChallenges.includes(
-      selectedChallenge.id
-    );
-
-    if (alreadyCompleted) {
+    if (record.completedChallenges.includes(selectedChallenge.id)) {
       setErrorMessage(
         lang === 'ka'
           ? 'ეს გამოწვევა უკვე შესრულებულია.'
@@ -629,13 +696,13 @@ export default function ChallengeView({
     const timing = record.acceptedDates?.[selectedChallenge.id];
     const expireAt = typeof timing === 'string' ? timing : timing?.expireAt;
 
-    const submissionType: ChallengeSubmissionType = isTextSubmission(
+    const submissionType: ChallengeSubmissionType | MediaType = isTextSubmission(
       selectedChallenge.submissionType
     )
-      ? selectedChallenge.submissionType
+      ? (selectedChallenge.submissionType as ChallengeSubmissionType)
       : mediaType;
 
-    if (!isTextSubmission(submissionType) && !selectedFile) {
+    if (!isTextSubmission(submissionType as ChallengeSubmissionType) && !selectedFile) {
       alert(
         lang === 'ka'
           ? 'გთხოვთ ატვირთოთ ფოტო, ვიდეო ან აუდიო მტკიცებულება.'
@@ -667,11 +734,19 @@ export default function ChallengeView({
         playerId: currentUser.id,
         challengeId: selectedChallenge.id,
         marathonId,
-        submissionType,
+        submissionType: submissionType as ChallengeSubmissionType,
         visibility,
         comment,
         reflectionText: comment,
         file: selectedFile,
+      });
+
+      const wallReadySubmission = saveWallReadySubmission({
+        savedSubmission,
+        challenge: selectedChallenge,
+        submissionType,
+        visibility,
+        comment,
       });
 
       record.completedChallenges = uniqueList(
@@ -695,9 +770,9 @@ export default function ChallengeView({
       );
 
       if (visibility === 'public') {
-        record.publicVideos = uniqueList(record.publicVideos, savedSubmission.id);
+        record.publicVideos = uniqueList(record.publicVideos, wallReadySubmission.id);
       } else {
-        record.hiddenVideos = uniqueList(record.hiddenVideos, savedSubmission.id);
+        record.hiddenVideos = uniqueList(record.hiddenVideos, wallReadySubmission.id);
       }
 
       record.points = Math.max(
@@ -707,7 +782,7 @@ export default function ChallengeView({
 
       addPointHistory(record, {
         challengeId: selectedChallenge.id,
-        submissionId: savedSubmission.id,
+        submissionId: wallReadySubmission.id,
         amount: points.totalPoints,
         reason: 'challenge-completed',
         breakdown: points,
@@ -724,8 +799,16 @@ export default function ChallengeView({
 
       setMessage(
         lang === 'ka'
-          ? `დავალება წარმატებით აიტვირთა! დაემატა +${points.totalPoints} ქულა 🎉`
-          : `Proof submitted! +${points.totalPoints} points added 🎉`
+          ? `დავალება წარმატებით აიტვირთა! დაემატა +${points.totalPoints} ქულა 🎉${
+              visibility === 'public'
+                ? ' გამოქვეყნდა მთავარ გვერდზე — სიმამაცის საჯარო კედელზე.'
+                : ' შენახულია პირად არქივში.'
+            }`
+          : `Proof submitted! +${points.totalPoints} points added 🎉${
+              visibility === 'public'
+                ? ' Published on the public courage wall.'
+                : ' Saved privately.'
+            }`
       );
 
       window.setTimeout(() => {
@@ -994,7 +1077,7 @@ export default function ChallengeView({
 
                     <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
                       <p className="text-[10px] font-black uppercase text-slate-400">
-                        {lang === 'ka' ? 'საჯაროობა' : 'Public proof'}
+                        {lang === 'ka' ? 'კედელზე გამოქვეყნება' : 'Wall publish'}
                       </p>
                       <p className="mt-1 text-sm font-black text-emerald-600">
                         +{POINTS_CONFIG.publicBraveryBonus}
@@ -1276,14 +1359,14 @@ export default function ChallengeView({
                               >
                                 <span className="block text-xs font-black text-[#1E1B35]">
                                   {lang === 'ka'
-                                    ? 'საჯაროობის ნებართვა და თანხმობა'
-                                    : 'Public sharing consent'}
+                                    ? 'ვეთანხმები მთავარ გვერდზე გამოქვეყნებას'
+                                    : 'I agree to publish this on the main page'}
                                 </span>
 
                                 <span className="mt-0.5 block text-[10px] font-medium text-slate-400">
                                   {lang === 'ka'
-                                    ? 'ჩემი შესრულება გამოჩნდეს საჯარო სიმამაცის კედელზე'
-                                    : 'Display my submission on the public courage wall'}
+                                    ? 'გამოქვეყნდეს მთავარ გვერდზე — სიმამაცის საჯარო კედელზე'
+                                    : 'Publish on the main page — public courage wall'}
                                 </span>
                               </label>
                             </div>
@@ -1306,8 +1389,8 @@ export default function ChallengeView({
                             >
                               <Eye className="h-3.5 w-3.5" />
                               {lang === 'ka'
-                                ? 'საჯარო კედელი'
-                                : 'Public wall'}
+                                ? 'გამოქვეყნება კედელზე'
+                                : 'Publish to wall'}
                             </button>
 
                             <button
