@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { ExternalLink, Eye, Heart, MessageCircle, Music2, X } from 'lucide-react';
+import {
+  ExternalLink,
+  Eye,
+  Heart,
+  MessageCircle,
+  Music2,
+  Send,
+  X,
+} from 'lucide-react';
 
 import { Submission, User } from '../types';
 import { submissionService } from '../services/submissionService';
@@ -16,6 +24,7 @@ const EXTRA_SUBMISSIONS_KEY = 'bifurcation_submissions';
 const LEGACY_SUBMISSIONS_KEY = 'submissions';
 const GUEST_VIEWER_KEY = 'bifurcation_guest_viewer_id';
 const GUEST_VOTER_KEY = 'bifurcation_guest_voter_id';
+const GUEST_COMMENTER_KEY = 'bifurcation_guest_commenter_id';
 
 function getSubmissionStorageKeys() {
   return Array.from(
@@ -49,6 +58,10 @@ function getOrCreateGuestVoterId() {
 
 function getOrCreateGuestViewerId() {
   return getOrCreateGuestId(GUEST_VIEWER_KEY, 'guest-viewer');
+}
+
+function getOrCreateGuestCommenterId() {
+  return getOrCreateGuestId(GUEST_COMMENTER_KEY, 'guest-commenter');
 }
 
 function safeLoadArray(key: string) {
@@ -137,6 +150,10 @@ function isPublicSubmission(submission: any) {
   );
 }
 
+function normalizeArray(value: any) {
+  return Array.isArray(value) ? value : [];
+}
+
 function mergeSubmissions(...lists: any[][]) {
   const map = new Map<string, any>();
 
@@ -148,25 +165,32 @@ function mergeSubmissions(...lists: any[][]) {
 
     const likedBy = Array.from(
       new Set([
-        ...(previous.likedBy || []),
-        ...(previous.votedUserIds || []),
-        ...(item.likedBy || []),
-        ...(item.liked_by || []),
-        ...(item.votedUserIds || []),
-        ...(item.voted_user_ids || []),
+        ...normalizeArray(previous.likedBy),
+        ...normalizeArray(previous.votedUserIds),
+        ...normalizeArray(item.likedBy),
+        ...normalizeArray(item.liked_by),
+        ...normalizeArray(item.votedUserIds),
+        ...normalizeArray(item.voted_user_ids),
       ])
     );
 
     const viewedBy = Array.from(
       new Set([
-        ...(previous.viewedBy || []),
-        ...(previous.viewed_by || []),
-        ...(item.viewedBy || []),
-        ...(item.viewed_by || []),
+        ...normalizeArray(previous.viewedBy),
+        ...normalizeArray(previous.viewed_by),
+        ...normalizeArray(item.viewedBy),
+        ...normalizeArray(item.viewed_by),
       ])
     );
 
-    const comments = item.comments || previous.comments || [];
+    const comments = [
+      ...normalizeArray(previous.comments),
+      ...normalizeArray(item.comments),
+    ];
+
+    const uniqueComments = Array.from(
+      new Map(comments.map((comment: any) => [comment.id || comment.createdAt, comment])).values()
+    );
 
     map.set(key, {
       ...previous,
@@ -253,7 +277,13 @@ function mergeSubmissions(...lists: any[][]) {
       likedBy,
       votedUserIds: likedBy,
       viewedBy,
-      comments,
+      comments: uniqueComments,
+      votePointsGivenBy:
+        item.votePointsGivenBy || previous.votePointsGivenBy || [],
+      viewPointsGivenBy:
+        item.viewPointsGivenBy || previous.viewPointsGivenBy || [],
+      commentPointsGivenBy:
+        item.commentPointsGivenBy || previous.commentPointsGivenBy || [],
 
       votes: item.votes ?? item.likes ?? likedBy.length ?? previous.votes ?? 0,
       likes: item.likes ?? item.votes ?? likedBy.length ?? previous.likes ?? 0,
@@ -261,21 +291,24 @@ function mergeSubmissions(...lists: any[][]) {
       siteViews:
         item.siteViews ??
         item.site_views ??
-        viewedBy.length ??
         previous.siteViews ??
+        viewedBy.length ??
         0,
       siteLikes:
         item.siteLikes ??
         item.site_likes ??
-        likedBy.length ??
         previous.siteLikes ??
+        likedBy.length ??
         0,
       siteComments:
         item.siteComments ??
         item.site_comments ??
-        comments.length ??
         previous.siteComments ??
+        uniqueComments.length ??
         0,
+
+      engagementPoints:
+        item.engagementPoints ?? previous.engagementPoints ?? 0,
 
       createdAt:
         item.createdAt ||
@@ -344,27 +377,16 @@ function normalizeTikTokUrl(url: string) {
   return url.split('?')[0];
 }
 
-function recordViewLocally(submissionId: string, viewerId: string) {
-  if (!submissionId || !viewerId) return;
+function getViewerNickname(currentUser: User | null, lang: 'ka' | 'en') {
+  if (currentUser?.nickname || currentUser?.firstName) {
+    return currentUser.nickname || currentUser.firstName || 'მოთამაშე';
+  }
 
-  const submissions = loadLocalSubmissions();
+  return lang === 'ka' ? 'სტუმარი' : 'Guest';
+}
 
-  const updated = submissions.map(submission => {
-    if (submission.id !== submissionId) return submission;
-
-    const viewedBy = Array.from(
-      new Set([...(submission.viewedBy || []), viewerId])
-    );
-
-    return {
-      ...submission,
-      viewedBy,
-      siteViews: viewedBy.length,
-      updatedAt: new Date().toISOString(),
-    };
-  });
-
-  saveLocalSubmissions(updated);
+function getViewerAvatar(currentUser: User | null) {
+  return currentUser?.avatar || '';
 }
 
 export default function VideoFeed({
@@ -377,6 +399,8 @@ export default function VideoFeed({
     useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [likeLoadingId, setLikeLoadingId] = useState<string | null>(null);
+  const [commentLoadingId, setCommentLoadingId] = useState<string | null>(null);
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [errorMessage, setErrorMessage] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
 
@@ -387,9 +411,10 @@ export default function VideoFeed({
 
       const localSubmissions = loadLocalSubmissions();
 
+      const playerKey = (storageKeys as any).players;
       const localUsers = [
         ...storageService.loadData<User[]>(storageKeys.users, []),
-        ...storageService.loadData<User[]>((storageKeys as any).players || '', []),
+        ...(playerKey ? storageService.loadData<User[]>(playerKey, []) : []),
       ].filter(Boolean);
 
       const localCurrentUser = storageService.loadData<User | null>(
@@ -474,18 +499,34 @@ export default function VideoFeed({
     };
   }, [currentUser?.id]);
 
-  function openSubmission(submission: any) {
-    const viewerId = currentUser?.id || getOrCreateGuestViewerId();
-
-    recordViewLocally(submission.id, viewerId);
-
+  function refreshSingleSubmission(submissionId: string) {
     const updatedSubmissions = loadLocalSubmissions();
-    const freshSubmission =
-      updatedSubmissions.find(item => item.id === submission.id) || submission;
+    const freshSubmission = updatedSubmissions.find(item => item.id === submissionId);
+
+    if (!freshSubmission) return;
 
     setSubmissions(prev =>
-      prev.map(item => (item.id === freshSubmission.id ? freshSubmission : item))
+      prev.map(item => (item.id === submissionId ? { ...item, ...freshSubmission } : item))
     );
+
+    setFullscreenSubmission((prev: any) =>
+      prev?.id === submissionId ? { ...prev, ...freshSubmission } : prev
+    );
+  }
+
+  async function openSubmission(submission: any) {
+    const viewerId = currentUser?.id || getOrCreateGuestViewerId();
+
+    try {
+      await submissionService.recordView(submission.id, viewerId);
+      refreshSingleSubmission(submission.id);
+      await onStateUpdate();
+    } catch (error) {
+      console.warn('View tracking failed:', error);
+    }
+
+    const freshSubmission =
+      loadLocalSubmissions().find(item => item.id === submission.id) || submission;
 
     setFullscreenSubmission({
       ...submission,
@@ -543,6 +584,53 @@ export default function VideoFeed({
       );
     } finally {
       setLikeLoadingId(null);
+    }
+  }
+
+  async function handleAddComment(submission: any) {
+    try {
+      setCommentLoadingId(submission.id);
+      setErrorMessage('');
+      setInfoMessage('');
+
+      const draft = (commentDrafts[submission.id] || '').trim();
+
+      if (!draft) {
+        throw new Error(lang === 'ka' ? 'კომენტარი ცარიელია.' : 'Comment is empty.');
+      }
+
+      const authorId = currentUser?.id || getOrCreateGuestCommenterId();
+      const authorNickname = getViewerNickname(currentUser, lang);
+      const authorAvatar = getViewerAvatar(currentUser);
+
+      await submissionService.addComment(submission.id, {
+        authorId,
+        authorNickname,
+        authorAvatar,
+        text: draft,
+      });
+
+      setCommentDrafts(prev => ({ ...prev, [submission.id]: '' }));
+
+      await loadPublicSubmissions();
+      refreshSingleSubmission(submission.id);
+      await onStateUpdate();
+
+      setInfoMessage(
+        lang === 'ka'
+          ? 'კომენტარი დაემატა.'
+          : 'Comment added.'
+      );
+    } catch (error: any) {
+      console.error('Comment error:', error);
+      setErrorMessage(
+        error?.message ||
+          (lang === 'ka'
+            ? 'კომენტარის დამატება ვერ მოხერხდა.'
+            : 'Could not add comment.')
+      );
+    } finally {
+      setCommentLoadingId(null);
     }
   }
 
@@ -604,6 +692,45 @@ export default function VideoFeed({
             {lang === 'ka' ? 'TikTok-ზე ნახვა' : 'Open on TikTok'}
           </a>
         )}
+      </div>
+    );
+  }
+
+  function renderCommentList(submission: any) {
+    const comments = submission.comments || [];
+
+    if (!comments.length) {
+      return (
+        <div className="rounded-2xl border border-white/10 bg-zinc-900 p-4 text-center text-xs font-bold text-slate-400">
+          {lang === 'ka' ? 'კომენტარები ჯერ არ არის.' : 'No comments yet.'}
+        </div>
+      );
+    }
+
+    return (
+      <div className="max-h-56 space-y-2 overflow-y-auto rounded-2xl border border-white/10 bg-zinc-900 p-3 text-left">
+        {comments.map((comment: any) => (
+          <div
+            key={comment.id || comment.createdAt}
+            className="rounded-xl bg-white/5 p-3 text-xs text-slate-200"
+          >
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="font-black text-violet-200">
+                @{comment.authorNickname || 'სტუმარი'}
+              </span>
+
+              <span className="text-[10px] text-slate-500">
+                {comment.createdAt
+                  ? new Date(comment.createdAt).toLocaleDateString(
+                      lang === 'ka' ? 'ka-GE' : 'en-US'
+                    )
+                  : ''}
+              </span>
+            </div>
+
+            <p className="leading-5">{comment.text}</p>
+          </div>
+        ))}
       </div>
     );
   }
@@ -748,6 +875,15 @@ export default function VideoFeed({
                     {likeCount} {lang === 'ka' ? 'გული' : 'Likes'}
                   </button>
 
+                  <button
+                    type="button"
+                    onClick={() => openSubmission(submission)}
+                    className="flex items-center gap-1 rounded-lg bg-emerald-50 px-3 py-1 text-[10px] font-black text-emerald-700"
+                  >
+                    <MessageCircle className="h-3 w-3" />
+                    {lang === 'ka' ? 'კომ.' : 'Comment'}
+                  </button>
+
                   <a
                     href={getSocialUrl(submission)}
                     target="_blank"
@@ -798,6 +934,43 @@ export default function VideoFeed({
               <div className="rounded-xl bg-white/10 p-3">
                 💬 {fullscreenSubmission.comments?.length || fullscreenSubmission.siteComments || 0}
               </div>
+            </div>
+
+            {renderCommentList(fullscreenSubmission)}
+
+            <div className="rounded-2xl border border-white/10 bg-zinc-950 p-3">
+              <textarea
+                value={commentDrafts[fullscreenSubmission.id] || ''}
+                onChange={event =>
+                  setCommentDrafts(prev => ({
+                    ...prev,
+                    [fullscreenSubmission.id]: event.target.value,
+                  }))
+                }
+                placeholder={
+                  lang === 'ka'
+                    ? 'დაწერე კომენტარი...'
+                    : 'Write a comment...'
+                }
+                maxLength={500}
+                className="h-20 w-full rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-white placeholder:text-slate-500 focus:border-[#7C4DFF] focus:outline-none"
+              />
+
+              <button
+                type="button"
+                onClick={() => handleAddComment(fullscreenSubmission)}
+                disabled={commentLoadingId === fullscreenSubmission.id}
+                className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#7C4DFF] px-5 py-3 text-xs font-black uppercase tracking-widest text-white shadow-md disabled:opacity-60"
+              >
+                <Send className="h-4 w-4" />
+                {commentLoadingId === fullscreenSubmission.id
+                  ? lang === 'ka'
+                    ? 'ემატება...'
+                    : 'Adding...'
+                  : lang === 'ka'
+                    ? 'კომენტარის დამატება'
+                    : 'Add comment'}
+              </button>
             </div>
 
             <button
