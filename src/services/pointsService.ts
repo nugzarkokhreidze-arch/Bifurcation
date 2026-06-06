@@ -39,11 +39,33 @@ export const POINTS_CONFIG = {
   videoConsultationLimitPerMarathon: 1,
 
   challengeDeadlineHours: 72,
+
+  siteViewBonus: 1,
+  siteCommentBonus: 3,
+
+  maxViewBonusPerSubmission: 30,
+  maxVoteBonusPerSubmission: 50,
+  maxCommentBonusPerSubmission: 45,
 } as const;
+
+export function clampPoints(
+  points: number,
+  min = 0,
+  max = 999999
+): number {
+  const numericValue = Number(points);
+
+  if (!Number.isFinite(numericValue)) {
+    return min;
+  }
+
+  return Math.min(max, Math.max(min, Math.round(numericValue)));
+}
 
 export function normalizeDifficulty(difficulty?: string): ChallengeDifficulty {
   if (difficulty === 'medium') return 'medium';
   if (difficulty === 'hard') return 'hard';
+
   return 'easy';
 }
 
@@ -56,11 +78,13 @@ export function getDifficultyLabel(
   if (lang === 'en') {
     if (normalized === 'easy') return 'Easy';
     if (normalized === 'medium') return 'Medium';
+
     return 'Hard';
   }
 
   if (normalized === 'easy') return 'ადვილი';
   if (normalized === 'medium') return 'საშუალო';
+
   return 'რთული';
 }
 
@@ -69,10 +93,13 @@ export function getBaseChallengePoints(challenge: Partial<Challenge>): number {
 
   if (difficulty === 'easy') return POINTS_CONFIG.easyChallenge;
   if (difficulty === 'medium') return POINTS_CONFIG.mediumChallenge;
+
   return POINTS_CONFIG.hardChallenge;
 }
 
-export function createChallengeTiming(fromDate: Date = new Date()): ChallengeTiming {
+export function createChallengeTiming(
+  fromDate: Date = new Date()
+): ChallengeTiming {
   const expireAt = new Date(
     fromDate.getTime() + POINTS_CONFIG.challengeDeadlineHours * 60 * 60 * 1000
   );
@@ -117,11 +144,13 @@ export function calculateCompletionPoints(params: {
   const braveryBonus =
     params.visibility === 'public' ? POINTS_CONFIG.publicBraveryBonus : 0;
 
+  const totalPoints = clampPoints(basePoints + deadlineBonus + braveryBonus);
+
   return {
     basePoints,
     deadlineBonus,
     braveryBonus,
-    totalPoints: basePoints + deadlineBonus + braveryBonus,
+    totalPoints,
   };
 }
 
@@ -147,6 +176,42 @@ export function calculateWrittenConsultationCost(): number {
 
 export function calculateVideoConsultationCost(): number {
   return POINTS_CONFIG.videoConsultationCost;
+}
+
+export function calculateSiteViewBonus(uniqueViews: number): number {
+  return clampPoints(
+    uniqueViews * POINTS_CONFIG.siteViewBonus,
+    0,
+    POINTS_CONFIG.maxViewBonusPerSubmission
+  );
+}
+
+export function calculateSiteVoteBonus(uniqueVotes: number): number {
+  return clampPoints(
+    uniqueVotes * POINTS_CONFIG.voteReceivedBonus,
+    0,
+    POINTS_CONFIG.maxVoteBonusPerSubmission
+  );
+}
+
+export function calculateSiteCommentBonus(uniqueComments: number): number {
+  return clampPoints(
+    uniqueComments * POINTS_CONFIG.siteCommentBonus,
+    0,
+    POINTS_CONFIG.maxCommentBonusPerSubmission
+  );
+}
+
+export function calculateSubmissionEngagementBonus(params: {
+  uniqueViews?: number;
+  uniqueVotes?: number;
+  uniqueComments?: number;
+}): number {
+  const viewBonus = calculateSiteViewBonus(params.uniqueViews || 0);
+  const voteBonus = calculateSiteVoteBonus(params.uniqueVotes || 0);
+  const commentBonus = calculateSiteCommentBonus(params.uniqueComments || 0);
+
+  return clampPoints(viewBonus + voteBonus + commentBonus);
 }
 
 export function getCountdownParts(expireAt?: string) {
@@ -176,10 +241,13 @@ export function getCountdownParts(expireAt?: string) {
   }
 
   const days = Math.floor(totalMs / (1000 * 60 * 60 * 24));
+
   const hours = Math.floor(
     (totalMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
   );
+
   const minutes = Math.floor((totalMs % (1000 * 60 * 60)) / (1000 * 60));
+
   const seconds = Math.floor((totalMs % (1000 * 60)) / 1000);
 
   return {
@@ -233,12 +301,13 @@ export function getScoringText(params: {
       `Challenge difficulty: ${getDifficultyLabel(params.challenge.difficulty, 'en')}`,
       `Base points: +${points.basePoints}`,
       `Deadline bonus: +${points.deadlineBonus}`,
-      `Public bravery bonus: +${points.braveryBonus}`,
-      `Total possible points: +${points.totalPoints}`,
+      `Public TikTok proof bonus: +${points.braveryBonus}`,
+      `Total possible completion points: +${points.totalPoints}`,
       `Skipping: ${POINTS_CONFIG.skippedChallengePenalty} points`,
       `Missing the deadline: ${POINTS_CONFIG.expiredChallengePenalty} points`,
-      `Each unique support received: +${POINTS_CONFIG.voteReceivedBonus} points`,
+      `Each unique site support received: +${POINTS_CONFIG.voteReceivedBonus} points`,
       `Supporting another player: +${POINTS_CONFIG.voterSupportBonus} points`,
+      `Site views, hearts and comments may add extra engagement points within limits.`,
     ].join('\n');
   }
 
@@ -246,15 +315,12 @@ export function getScoringText(params: {
     `სირთულე: ${getDifficultyLabel(params.challenge.difficulty, 'ka')}`,
     `გამოწვევის ქულა: +${points.basePoints}`,
     `დედლაინამდე შესრულების ქულა: +${points.deadlineBonus}`,
-    `სიმამაცის ქულა საჯაროობისთვის: +${points.braveryBonus}`,
-    `ჯამური შესაძლო ქულა: +${points.totalPoints}`,
+    `TikTok-ზე საჯარო შესრულების ბონუსი: +${points.braveryBonus}`,
+    `ჯამური შესაძლო შესრულების ქულა: +${points.totalPoints}`,
     `აცილება: ${POINTS_CONFIG.skippedChallengePenalty} ქულა`,
     `დედლაინის გადაცილება: ${POINTS_CONFIG.expiredChallengePenalty} ქულა`,
-    `თითოეული უნიკალური მხარდაჭერა: +${POINTS_CONFIG.voteReceivedBonus} ქულა`,
+    `საიტზე მიღებული თითოეული უნიკალური მხარდაჭერა: +${POINTS_CONFIG.voteReceivedBonus} ქულა`,
     `სხვისი მხარდაჭერა: +${POINTS_CONFIG.voterSupportBonus} ქულა`,
+    `საიტზე ნახვები, გულები და კომენტარები დამატებით ქულებად შეიძლება ჩაითვალოს დადგენილი ლიმიტებით.`,
   ].join('\n');
-}
-
-export function clampPoints(points: number): number {
-  return Math.max(0, Math.round(points));
 }
