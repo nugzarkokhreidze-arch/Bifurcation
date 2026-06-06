@@ -114,6 +114,36 @@ function mergeById<T extends { id?: string }>(...lists: T[][]) {
   return Array.from(map.values());
 }
 
+const EXTRA_SUBMISSIONS_KEY = 'bifurcation_submissions';
+
+function getSubmissionStorageKeys() {
+  return Array.from(
+    new Set(
+      [storageKeys.submissions, EXTRA_SUBMISSIONS_KEY].filter(
+        (key): key is string => Boolean(key)
+      )
+    )
+  );
+}
+
+function loadLocalSubmissions() {
+  const lists = getSubmissionStorageKeys().map(key =>
+    storageService.loadData<Submission[]>(key, [])
+  );
+
+  return mergeById(...lists) as Submission[];
+}
+
+function saveLocalSubmissions(items: Submission[]) {
+  for (const key of getSubmissionStorageKeys()) {
+    try {
+      storageService.saveData(key, items);
+    } catch (error) {
+      console.warn(`Could not save submissions to ${key}:`, error);
+    }
+  }
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [authMode, setAuthMode] = useState<AuthMode>('login');
@@ -155,10 +185,7 @@ export default function App() {
       []
     );
 
-    const localSubmissions = storageService.loadData<Submission[]>(
-      storageKeys.submissions,
-      []
-    );
+    const localSubmissions = loadLocalSubmissions();
 
     const localUsers = storageService.loadData<User[]>(storageKeys.users, []);
 
@@ -188,10 +215,7 @@ export default function App() {
         []
       );
 
-      const localSubmissions = storageService.loadData<Submission[]>(
-        storageKeys.submissions,
-        []
-      );
+      const localSubmissions = loadLocalSubmissions();
 
       const localUsers = storageService.loadData<User[]>(storageKeys.users, []);
 
@@ -228,10 +252,7 @@ export default function App() {
 
       try {
         const onlineSubmissions = await submissionService.getSubmissions();
-        const latestLocalSubmissions = storageService.loadData<Submission[]>(
-          storageKeys.submissions,
-          []
-        );
+        const latestLocalSubmissions = loadLocalSubmissions();
 
         loadedSubmissions = mergeById(
           localSubmissions,
@@ -239,7 +260,7 @@ export default function App() {
           onlineSubmissions
         ) as Submission[];
 
-        storageService.saveData(storageKeys.submissions, loadedSubmissions);
+        saveLocalSubmissions(loadedSubmissions);
       } catch (error) {
         console.warn('Submissions online load failed, using local:', error);
       }
