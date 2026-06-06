@@ -1,40 +1,31 @@
-import React, { useState, useEffect } from "react";
-import { User, Submission } from "../types";
-import { getPlayerAvatar } from "../utils/avatarUtils";
-import { storageService, storageKeys } from "../services/storageService";
-import LiveLeaderboardSidebar from "./LiveLeaderboardSidebar";
-import { 
-  Shield, 
-  Sparkles, 
-  Heart, 
-  Eye, 
-  Compass, 
-  Flame, 
-  Paintbrush, 
-  Lock, 
-  TrendingUp, 
-  ClipboardCheck, 
-  Scale, 
-  Sun,
+import React, { useEffect, useMemo, useState } from 'react';
+import { User, Submission } from '../types';
+import { getPlayerAvatar } from '../utils/avatarUtils';
+import { storageService, storageKeys } from '../services/storageService';
+import LiveLeaderboardSidebar from './LiveLeaderboardSidebar';
+import {
+  Shield,
+  Sparkles,
+  Heart,
+  Eye,
+  Compass,
+  Flame,
+  Paintbrush,
   UserPlus,
   FileText,
   Trophy,
-  Bot,
-  MessageSquare,
-  ShieldAlert,
-  UserX,
   Play,
-  AlertTriangle,
-  Info,
-  Calendar,
   ArrowRight,
-  Menu,
-  X
-} from "lucide-react";
+  X,
+} from 'lucide-react';
 
 interface LandingPageProps {
   currentUser: User | null;
-  submissions: (Submission & { playerNickname?: string; playerAvatar?: string; challengeTitle?: string })[];
+  submissions: (Submission & {
+    playerNickname?: string;
+    playerAvatar?: string;
+    challengeTitle?: string;
+  })[];
   onStartRegister: () => void;
   onStartLogin: () => void;
   setCurrentTab: (tab: string) => void;
@@ -44,764 +35,1360 @@ interface LandingPageProps {
   marathons?: any[];
   monthlyPlayerRecords?: any[];
   onStateUpdate?: () => void;
-  onChangeLang?: (l: "ka" | "en") => void;
+  onChangeLang?: (l: 'ka' | 'en') => void;
   setActiveCabinetTab?: (tab: string) => void;
   setSelectedMarathonId?: (id: string | null) => void;
   selectedMarathonId?: string;
 }
 
-export default function LandingPage({ 
-  currentUser, 
-  submissions, 
-  onStartRegister, 
-  onStartLogin, 
+function normalizeId(id?: string) {
+  if (!id) return '';
+  return id.startsWith('marathon-') ? id : `marathon-${id}`;
+}
+
+function shortId(id?: string) {
+  return (id || '').replace('marathon-', '');
+}
+
+function getOrCreateGuestVoterId() {
+  if (typeof window === 'undefined') return '';
+
+  const existing = localStorage.getItem('bifurcation_guest_voter_id');
+
+  if (existing) return existing;
+
+  const created = `guest-voter-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+
+  localStorage.setItem('bifurcation_guest_voter_id', created);
+
+  return created;
+}
+
+function getSubmissionUrl(submission: any) {
+  return (
+    submission.fileUrl ||
+    submission.videoUrl ||
+    submission.file_url ||
+    submission.video_url ||
+    ''
+  );
+}
+
+function getSubmissionText(submission: any) {
+  return (
+    submission.textDescription ||
+    submission.reflectionText ||
+    submission.comment ||
+    submission.description ||
+    ''
+  );
+}
+
+function getSubmissionCreatedAt(submission: any) {
+  return new Date(
+    submission.createdAt ||
+      submission.created_at ||
+      submission.updatedAt ||
+      submission.updated_at ||
+      0
+  ).getTime();
+}
+
+function detectMediaType(submission: any) {
+  const type = submission.submissionType || submission.submission_type || '';
+  const url = getSubmissionUrl(submission);
+
+  if (type === 'photo' || url.match(/\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i) || url.startsWith('data:image/')) {
+    return 'photo';
+  }
+
+  if (type === 'audio' || url.match(/\.(mp3|wav|ogg|aac|m4a)($|\?)/i) || url.startsWith('data:audio/')) {
+    return 'audio';
+  }
+
+  if (type === 'video' || url.match(/\.(mp4|webm|mov|m4v)($|\?)/i) || url.startsWith('data:video/')) {
+    return 'video';
+  }
+
+  if (!url) return 'text';
+
+  return 'video';
+}
+
+function mergeSubmissions(...lists: any[][]) {
+  const map = new Map<string, any>();
+
+  lists.flat().forEach(item => {
+    if (!item?.id) return;
+
+    const previous = map.get(item.id) || {};
+
+    map.set(item.id, {
+      ...previous,
+      ...item,
+      likedBy:
+        item.likedBy ||
+        item.liked_by ||
+        previous.likedBy ||
+        previous.liked_by ||
+        [],
+      votes:
+        item.votes ??
+        item.likes ??
+        previous.votes ??
+        previous.likes ??
+        0,
+    });
+  });
+
+  return Array.from(map.values()).sort(
+    (a, b) => getSubmissionCreatedAt(b) - getSubmissionCreatedAt(a)
+  );
+}
+
+function buildChallengeLookup(marathons: any[]) {
+  const map = new Map<string, any>();
+
+  marathons.forEach(marathon => {
+    (marathon.challenges || []).forEach((challenge: any) => {
+      if (!challenge?.id) return;
+
+      map.set(challenge.id, {
+        ...challenge,
+        marathonId: marathon.id,
+      });
+    });
+  });
+
+  return map;
+}
+
+export default function LandingPage({
+  currentUser,
+  submissions,
+  onStartRegister,
   setCurrentTab,
-  currentTab,
   onVote,
-  lang = "ka",
+  lang = 'ka',
   marathons = [],
   monthlyPlayerRecords = [],
   onStateUpdate,
-  onChangeLang,
   setActiveCabinetTab,
-  setSelectedMarathonId
+  setSelectedMarathonId,
 }: LandingPageProps) {
-  
   const [activeMediaSub, setActiveMediaSub] = useState<any | null>(null);
-  const [promptRegisterToast, setPromptRegisterToast] = useState(false);
-  const [localMobileMenuOpen, setLocalMobileMenuOpen] = useState(false);
-  const [activeTabSubCategory, setActiveTabSubCategory] = useState<'all' | 'popular' | 'specials'>('all');
-  const [selectedPreviewMarathon, setSelectedPreviewMarathon] = useState<any | null>(null);
-  const [selectedPreviewChallenge, setSelectedPreviewChallenge] = useState<any | null>(null);
-
-  // ტაიმერების ეფექტი
+  const [selectedPreviewMarathon, setSelectedPreviewMarathon] =
+    useState<any | null>(null);
+  const [selectedPreviewChallenge, setSelectedPreviewChallenge] =
+    useState<any | null>(null);
   const [tick, setTick] = useState(0);
+  const [voteMessage, setVoteMessage] = useState('');
+
   useEffect(() => {
-    const timer = setInterval(() => setTick(t => t + 1), 60000);
-    return () => clearInterval(timer);
+    const timer = window.setInterval(() => setTick(value => value + 1), 60000);
+    return () => window.clearInterval(timer);
   }, []);
-
-  // უკათვლელი ტექსტის ლოგიკა საფრთხოების ფილტრით NaN-ის წინააღმდეგ
-  const getCountdownText = (targetDateStr: string, activeLang: string) => {
-    if (!targetDateStr) {
-      return activeLang === "ka" ? "განისაზღვრება (TBD)" : "TBD";
-    }
-    const targetDate = new Date(targetDateStr);
-    if (isNaN(targetDate.getTime())) {
-      return activeLang === "ka" ? "განისაზღვრება (TBD)" : "TBD";
-    }
-    const diffTime = targetDate.getTime() - new Date().getTime();
-    if (diffTime <= 0) {
-      return activeLang === "ka" ? "დასრულებულია 🔒" : "Ended 🔒";
-    }
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-    const diffHours = Math.floor((diffTime % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const diffMinutes = Math.floor((diffTime % (1000 * 60 * 60)) / (1000 * 60));
-    
-    if (activeLang === "ka") {
-      return `დარჩენილია: ${diffDays} დღე, ${diffHours} სთ, ${diffMinutes} წთ`;
-    } else {
-      return `Time left: ${diffDays}d, ${diffHours}h, ${diffMinutes}m`;
-    }
-  };
-
-  const getMonthEmoji = (monthId: string) => {
-    if (monthId.includes("june")) return "🎒";
-    if (monthId.includes("july")) return "🏄";
-    if (monthId.includes("august")) return "🏕️";
-    return "🍂";
-  };
 
   const isUserAuthenticated = currentUser !== null;
 
-  // საჯარო კედლის პოსტების გაფილტვრა
-  const currentFeedSubmissions = submissions?.filter(s => s.visibility === "public") || [];
+  const allUsers = useMemo(() => {
+    const localUsers = storageService.loadData<User[]>(storageKeys.users, []);
+    const localCurrentUser = storageService.loadData<User | null>(
+      storageKeys.currentUser,
+      null
+    );
 
-  const handleVoteAction = async (sub: any) => {
-    try {
-      await onVote(sub.id);
-      if (onStateUpdate) onStateUpdate();
-    } catch (e) {
-      console.error(e);
-    }
-  };
+    const map = new Map<string, any>();
 
-  const handleStartGameClick = () => {
-    if (isUserAuthenticated) {
-      setCurrentTab("cabinet");
-      if (setActiveCabinetTab) setActiveCabinetTab("challenges");
-    } else {
-      onStartRegister();
-    }
-  };
+    [...localUsers, ...(localCurrentUser ? [localCurrentUser] : []), ...(currentUser ? [currentUser] : [])].forEach(
+      user => {
+        if (user?.id) map.set(user.id, user);
+      }
+    );
 
-  const handleViewMarathonsClick = () => {
-    const element = document.getElementById("marathons-dashboard");
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth" });
-    }
-  };
+    return Array.from(map.values());
+  }, [currentUser, tick]);
 
-  const navigateToCabinetTab = (tabName: string) => {
-    setCurrentTab("cabinet");
-    if (setActiveCabinetTab) setActiveCabinetTab(tabName);
-  };
+  const allMarathons = useMemo(() => {
+    const localMarathons = storageService.loadData<any[]>(
+      storageKeys.marathons,
+      []
+    );
 
-  // მთავარ გვერდზე მარათონის გახსნის ფუნქციონალი
-  const handleMarathonClick = (marathonId: string) => {
-    if (setSelectedMarathonId) {
-      setSelectedMarathonId(marathonId);
-    }
-    setCurrentTab("cabinet");
-    if (setActiveCabinetTab) {
-      setActiveCabinetTab("challenges");
-    }
-  };
+    const map = new Map<string, any>();
 
-  const getPreviewChallenges = (m: any) => {
-    if (m.challenges && m.challenges.length > 0) {
-      return m.challenges;
-    }
-    const localSaved = storageService.loadData<any[]>("bifurcation_marathons", []);
-    const found = localSaved.find((mItem: any) => mItem.id === m.id || mItem.id?.replace("marathon-", "") === m.id?.replace("marathon-", ""));
-    return found?.challenges || [];
-  };
+    [...localMarathons, ...(marathons || [])].forEach(marathon => {
+      if (marathon?.id) map.set(marathon.id, marathon);
+    });
+
+    return Array.from(map.values());
+  }, [marathons, tick]);
+
+  const challengeLookup = useMemo(
+    () => buildChallengeLookup(allMarathons),
+    [allMarathons]
+  );
+
+  const currentFeedSubmissions = useMemo(() => {
+    const localSubmissions = storageService.loadData<any[]>(
+      storageKeys.submissions,
+      []
+    );
+
+    const merged = mergeSubmissions(localSubmissions, submissions || []);
+
+    return merged
+      .filter(submission => {
+        const visibility = submission.visibility || submission.status;
+        return visibility === 'public';
+      })
+      .map(submission => {
+        const player = allUsers.find(user => user.id === submission.playerId);
+        const challenge = challengeLookup.get(submission.challengeId);
+
+        const playerNickname =
+          submission.playerNickname ||
+          submission.player_nickname ||
+          player?.nickname ||
+          player?.firstName ||
+          'მოთამაშე';
+
+        const playerAvatar =
+          submission.playerAvatar ||
+          submission.player_avatar ||
+          player?.avatar ||
+          getPlayerAvatar(playerNickname, '');
+
+        const challengeTitle =
+          submission.challengeTitle ||
+          submission.challenge_title ||
+          (lang === 'ka'
+            ? challenge?.title_ka || challenge?.title
+            : challenge?.title_en || challenge?.title) ||
+          (lang === 'ka' ? 'გამოწვევა' : 'Challenge');
+
+        return {
+          ...submission,
+          playerNickname,
+          playerAvatar,
+          challengeTitle,
+          likedBy:
+            submission.likedBy ||
+            submission.liked_by ||
+            submission.votedUserIds ||
+            [],
+          votes:
+            submission.votes ||
+            submission.likes ||
+            submission.likedBy?.length ||
+            submission.liked_by?.length ||
+            0,
+        };
+      });
+  }, [submissions, allUsers, challengeLookup, lang, tick]);
 
   const values = [
-    { title: lang === "ka" ? "ნებაყოფლობითობა" : "Voluntariness", desc: lang === "ka" ? "თამაშში მონაწილეობა და ნებისმიერი ტიპის გამოწვევის აღება აბსოლუტურად თქვენი თავისუფალი არჩევანია." : "Strictly your free choice.", icon: Compass },
-    { title: lang === "ka" ? "უსაფრთხოება" : "Safety First", desc: lang === "ka" ? "არცერთი დავალება არ უნდა იყოს თქვენი ან სხვისი ჯანმრთელობისთვის, უსაფრთხოებისთვის ან ღირსებისთვის საზიანო." : "No challenge should ever endanger safety.", icon: Shield },
-    { title: lang === "ka" ? "პატივისცემა" : "Mutual Respect", desc: lang === "ka" ? "მოთამაშეები ერთმანეთს არ ამცირებენ, პატივს სცემენ განსხვავებულ ფორმატებს და გვერდში უდგანან განვითარების გზაზე." : "Players respect each other.", icon: Heart },
-    { title: lang === "ka" ? "სიმამაცე" : "Courage & Bravery", desc: lang === "ka" ? "თამაში გეხმარებათ საკუთარი შიშების, ხელოვნური ბარიერებისა და სოციალური შფოთვის უსაფრთხოდ გადალახვაში." : "Overcome personal limitations.", icon: Flame },
-    { title: lang === "ka" ? "შემოქმედებითობა" : "Creativity", desc: lang === "ka" ? "ყველა დავალება შეიძლება შესრულდეს მაქსიმალურად ორიგინალურად, პიროვნულად, შემოქმედებითად და საინტერესოდ." : "Maximum creative personality.", icon: Paintbrush }
+    {
+      title: lang === 'ka' ? 'ნებაყოფლობითობა' : 'Voluntariness',
+      desc:
+        lang === 'ka'
+          ? 'თამაშში მონაწილეობა და ნებისმიერი ტიპის გამოწვევის აღება არის თქვენი თავისუფალი არჩევანი.'
+          : 'Participation and every challenge are your free choice.',
+      icon: Compass,
+    },
+    {
+      title: lang === 'ka' ? 'უსაფრთხოება' : 'Safety First',
+      desc:
+        lang === 'ka'
+          ? 'არცერთი დავალება არ უნდა იყოს თქვენი ან სხვისი ჯანმრთელობისთვის, უსაფრთხოებისთვის ან ღირსებისთვის საზიანო.'
+          : 'No challenge should endanger health, safety, or dignity.',
+      icon: Shield,
+    },
+    {
+      title: lang === 'ka' ? 'პატივისცემა' : 'Mutual Respect',
+      desc:
+        lang === 'ka'
+          ? 'მოთამაშეები ერთმანეთს არ ამცირებენ და პატივს სცემენ განსხვავებულ ფორმატებს.'
+          : 'Players respect each other and different formats.',
+      icon: Heart,
+    },
+    {
+      title: lang === 'ka' ? 'სიმამაცე' : 'Courage',
+      desc:
+        lang === 'ka'
+          ? 'თამაში გეხმარებათ ბარიერების უსაფრთხოდ გადალახვაში.'
+          : 'The game helps you overcome barriers safely.',
+      icon: Flame,
+    },
+    {
+      title: lang === 'ka' ? 'შემოქმედებითობა' : 'Creativity',
+      desc:
+        lang === 'ka'
+          ? 'ყველა დავალება შეიძლება შესრულდეს ორიგინალურად და საინტერესოდ.'
+          : 'Each task can be completed creatively.',
+      icon: Paintbrush,
+    },
   ];
 
   const rules = [
-    { title: lang === "ka" ? "რეგისტრაცია და ნიკნეიმი" : "Registration & Nickname", desc: lang === "ka" ? "თამაშში შემოსასვლელად ქმნით ანგარიშს. შეგიძლიათ გამოიყენოთ საიდუმლო ნიკნეიმი თქვენი ანონიმურობისთვის." : "Choose a pseudonym.", icon: UserPlus },
-    { title: lang === "ka" ? "მონაწილეობის შეთანხმება" : "Participation Agreement", desc: lang === "ka" ? "რეგისტრაციისას ხელს აწერთ ელექტრონულ თანხმობას, რომ თამაშობთ ნებაყოფლობით და პასუხისმგებლობა გეკისრებათ მხოლოდ თქვენ." : "Confirm voluntary play.", icon: FileText },
-    { title: lang === "ka" ? "ვიდეოების ხილვადობა" : "Video Visibility", desc: lang === "ka" ? "ყოველი დავალებისას თავად ირჩევთ სტატუსს: საჯარო თუ დამალული." : "Choose visibility for bonuses.", icon: Eye },
-    { title: lang === "ka" ? "ხმის მიცემა & რეზონანსი" : "Voting & Resonance", desc: lang === "ka" ? "მხარდაჭერა! ხმის მიცემით თქვენ გერიცხებათ +2 ქულა, ხოლო მოთამაშე იღებს დამატებით +5 რეიტინგს." : "Upvoting awards currency.", icon: Heart },
-    { title: lang === "ka" ? "საერთო რეიტინგი / ლიდერბორდი" : "Leaderboard Standards", desc: lang === "ka" ? "ვირტუალური ქულებით ყალიბდება ლიდერთა დაფა. რეიტინგში ჩანს მხოლოდ თქვენი არჩეული ნიკნეიმი." : "Scores form standings.", icon: Trophy }
+    {
+      title: lang === 'ka' ? 'რეგისტრაცია და ნიკნეიმი' : 'Registration',
+      desc:
+        lang === 'ka'
+          ? 'თამაშში შემოსასვლელად ქმნით ანგარიშს და შეგიძლიათ გამოიყენოთ ნიკნეიმი.'
+          : 'Create an account and use a nickname.',
+      icon: UserPlus,
+    },
+    {
+      title: lang === 'ka' ? 'მონაწილეობის შეთანხმება' : 'Agreement',
+      desc:
+        lang === 'ka'
+          ? 'რეგისტრაციისას ადასტურებთ, რომ თამაშობთ ნებაყოფლობით.'
+          : 'Confirm that participation is voluntary.',
+      icon: FileText,
+    },
+    {
+      title: lang === 'ka' ? 'ხილვადობა' : 'Visibility',
+      desc:
+        lang === 'ka'
+          ? 'ყოველი დავალებისას ირჩევთ: საჯარო თუ პირადი.'
+          : 'Choose public or private for each submission.',
+      icon: Eye,
+    },
+    {
+      title: lang === 'ka' ? 'მხარდაჭერა' : 'Support',
+      desc:
+        lang === 'ka'
+          ? 'საჯარო დავალებაზე მხარდაჭერა ზრდის ავტორის ქულებს.'
+          : 'Supporting public tasks increases the author’s points.',
+      icon: Heart,
+    },
+    {
+      title: lang === 'ka' ? 'ლიდერბორდი' : 'Leaderboard',
+      desc:
+        lang === 'ka'
+          ? 'რეიტინგში ჩანს არჩეული ნიკნეიმი, ავატარი და ქულები.'
+          : 'The leaderboard shows nickname, avatar, and points.',
+      icon: Trophy,
+    },
   ];
 
-  return (
-    <div className="w-full min-h-screen bg-[#04020d] text-slate-100 font-sans overflow-x-hidden">
-      
-      {/* HERO SECTION - 100% სიგანე */}
-      <section className="relative overflow-hidden pt-12 pb-20 lg:pt-16 lg:pb-28 px-4 sm:px-8 md:px-12 bg-radial-at-t from-[#151034] via-[#050311] to-[#03010a]">
-        <div className="max-w-5xl mx-auto relative z-10 text-left space-y-6">
-          <div className="inline-flex items-center gap-1.5 bg-[#120D2F]/75 border border-violet-500/30 px-3 sm:px-4 py-1.5 rounded-full text-xs font-bold text-violet-300 backdrop-blur-sm">
-            <Sparkles className="w-3.5 h-3.5 text-fuchsia-400 animate-pulse" />
-            <span>{lang === "ka" ? "სივრცითი პროვოკაციული თამაში" : "Spatial Provocative Game"}</span>
+  function getCountdownText(targetDateStr: string, activeLang: string) {
+    if (!targetDateStr) {
+      return activeLang === 'ka' ? 'განისაზღვრება' : 'TBD';
+    }
+
+    const targetDate = new Date(targetDateStr);
+
+    if (Number.isNaN(targetDate.getTime())) {
+      return activeLang === 'ka' ? 'განისაზღვრება' : 'TBD';
+    }
+
+    const diffTime = targetDate.getTime() - new Date().getTime();
+
+    if (diffTime <= 0) {
+      return activeLang === 'ka' ? 'დასრულებულია 🔒' : 'Ended 🔒';
+    }
+
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    const diffHours = Math.floor(
+      (diffTime % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
+    );
+    const diffMinutes = Math.floor(
+      (diffTime % (1000 * 60 * 60)) / (1000 * 60)
+    );
+
+    return activeLang === 'ka'
+      ? `დარჩენილია: ${diffDays} დღე, ${diffHours} სთ, ${diffMinutes} წთ`
+      : `Time left: ${diffDays}d, ${diffHours}h, ${diffMinutes}m`;
+  }
+
+  function getMonthEmoji(monthId: string) {
+    if (monthId.includes('june')) return '🎒';
+    if (monthId.includes('july')) return '🏄';
+    if (monthId.includes('august')) return '🏕️';
+    return '🍂';
+  }
+
+  function getPreviewChallenges(marathon: any) {
+    if (marathon.challenges && marathon.challenges.length > 0) {
+      return marathon.challenges;
+    }
+
+    const localSaved = storageService.loadData<any[]>(
+      storageKeys.marathons,
+      []
+    );
+
+    const found = localSaved.find(
+      item =>
+        item.id === marathon.id ||
+        shortId(item.id) === shortId(marathon.id)
+    );
+
+    return found?.challenges || [];
+  }
+
+  async function handleVoteAction(submission: any) {
+    try {
+      getOrCreateGuestVoterId();
+      setVoteMessage('');
+
+      await onVote(submission.id);
+      await onStateUpdate?.();
+
+      setVoteMessage(
+        lang === 'ka'
+          ? 'მხარდაჭერა დაფიქსირდა.'
+          : 'Support has been recorded.'
+      );
+    } catch (error) {
+      console.error(error);
+      setVoteMessage(
+        lang === 'ka'
+          ? 'მხარდაჭერა ვერ დაფიქსირდა.'
+          : 'Support could not be recorded.'
+      );
+    }
+  }
+
+  function handleStartGameClick() {
+    if (isUserAuthenticated) {
+      setCurrentTab('cabinet');
+      setActiveCabinetTab?.('challenges');
+    } else {
+      onStartRegister();
+    }
+  }
+
+  function handleViewMarathonsClick() {
+    const element = document.getElementById('marathons-dashboard');
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth' });
+    }
+  }
+
+  function openChallengeWorkspace(marathonId: string) {
+    setSelectedMarathonId?.(shortId(marathonId));
+    setCurrentTab('cabinet');
+    setActiveCabinetTab?.('challenges');
+  }
+
+  function renderSubmissionMedia(submission: any, mode: 'card' | 'modal') {
+    const url = getSubmissionUrl(submission);
+    const mediaType = detectMediaType(submission);
+
+    if (!url || mediaType === 'text') {
+      return (
+        <div className="flex h-full w-full items-center justify-center bg-slate-950 p-6 text-center text-xs font-semibold text-slate-300">
+          {getSubmissionText(submission) ||
+            (lang === 'ka' ? 'ტექსტური ჩანაწერი' : 'Text proof')}
+        </div>
+      );
+    }
+
+    if (mediaType === 'photo') {
+      return (
+        <img
+          src={url}
+          className={
+            mode === 'card'
+              ? 'h-full w-full object-cover opacity-90 transition-transform duration-500 group-hover:scale-105'
+              : 'h-full w-full object-contain bg-slate-950'
+          }
+          alt={submission.challengeTitle || 'Submission'}
+          referrerPolicy="no-referrer"
+        />
+      );
+    }
+
+    if (mediaType === 'audio') {
+      return (
+        <div className="flex h-full w-full flex-col items-center justify-center bg-slate-950 p-6 text-center text-white">
+          <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-[#7C4DFF]/20 text-2xl text-[#7C4DFF]">
+            🎵
           </div>
 
-          <h1 className="text-4xl xs:text-5xl sm:text-7xl md:text-8xl font-black tracking-tight">
-            <span className="bg-clip-text text-transparent bg-gradient-to-r from-violet-500 via-fuchsia-500 to-amber-500 font-extrabold filter drop-shadow-[0_0_15px_rgba(167,139,250,0.25)]">
-              {lang === "ka" ? "ბიფურკაცია" : "Bifurcation"}
+          {mode === 'modal' ? (
+            <audio src={url} controls autoPlay className="w-full" />
+          ) : (
+            <span className="font-mono text-[10px] font-extrabold uppercase tracking-wider text-purple-300">
+              Audio proof
+            </span>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <video
+        src={url}
+        className={
+          mode === 'card'
+            ? 'h-full w-full object-cover opacity-90 transition-transform duration-500 group-hover:scale-105'
+            : 'h-full w-full object-contain bg-slate-950'
+        }
+        controls={mode === 'modal'}
+        autoPlay={mode === 'modal'}
+        muted={mode === 'card'}
+        loop={mode === 'card'}
+        playsInline
+      />
+    );
+  }
+
+  return (
+    <div className="min-h-screen w-full overflow-x-hidden bg-[#04020d] font-sans text-slate-100">
+      <section className="relative overflow-hidden bg-[#04020d] px-4 pb-20 pt-12 sm:px-8 md:px-12 lg:pb-28 lg:pt-16">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,#1c1544_0%,#050311_46%,#03010a_100%)]" />
+
+        <div className="relative z-10 mx-auto max-w-5xl space-y-6 text-left">
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-[#120D2F]/75 px-4 py-1.5 text-xs font-bold text-violet-300 backdrop-blur-sm">
+            <Sparkles className="h-3.5 w-3.5 animate-pulse text-fuchsia-400" />
+            <span>
+              {lang === 'ka'
+                ? 'სივრცითი პროვოკაციული თამაში'
+                : 'Spatial Provocative Game'}
+            </span>
+          </div>
+
+          <h1 className="text-4xl font-black tracking-tight sm:text-7xl md:text-8xl">
+            <span className="bg-gradient-to-r from-violet-500 via-fuchsia-500 to-amber-500 bg-clip-text font-extrabold text-transparent drop-shadow-[0_0_15px_rgba(167,139,250,0.25)]">
+              {lang === 'ka' ? 'ბიფურკაცია' : 'Bifurcation'}
             </span>
           </h1>
 
-          <div className="flex gap-3 sm:gap-4 items-stretch pl-1">
-            <div className="w-1 sm:w-1.5 rounded-full bg-gradient-to-b from-[#7c3aed] via-[#db2777] to-[#fbbf24] shrink-0"></div>
+          <div className="flex items-stretch gap-3 pl-1 sm:gap-4">
+            <div className="w-1 shrink-0 rounded-full bg-gradient-to-b from-[#7c3aed] via-[#db2777] to-[#fbbf24] sm:w-1.5" />
+
             <div className="space-y-2">
-              <h2 className="text-base sm:text-xl md:text-2xl font-black text-white leading-snug">
-                {lang === "ka" ? "ახალი გამოწვევები, სოციალური თამაშები და უფრო თავდაჯერებული შენ." : "New challenges, social games, and a more confident you."}
+              <h2 className="text-base font-black leading-snug text-white sm:text-xl md:text-2xl">
+                {lang === 'ka'
+                  ? 'ახალი გამოწვევები, სოციალური თამაშები და უფრო თავდაჯერებული შენ.'
+                  : 'New challenges, social games, and a more confident you.'}
               </h2>
-              <p className="text-xs sm:text-sm text-slate-400 font-light max-w-xl">
-                {lang === "ka" ? "ეს არ არის ჩვეულებრივი პორტალი. ეს არის შენი შემოქმედებითი გამბედაობის სივრცე, სადაც ყოველი მცირე გადაწყვეტილება გიბიძგებს პიროვნული ტრანსფორმაციისკენ." : "This is your safe zone of creative courage."}
+
+              <p className="max-w-xl text-xs font-light text-slate-400 sm:text-sm">
+                {lang === 'ka'
+                  ? 'ეს არის შენი შემოქმედებითი გამბედაობის სივრცე, სადაც ყოველი მცირე გადაწყვეტილება გიბიძგებს პიროვნული ტრანსფორმაციისკენ.'
+                  : 'This is your safe zone of creative courage.'}
               </p>
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-3 pt-2 w-full sm:w-auto">
-            <button onClick={handleStartGameClick} className="px-6 py-3.5 bg-gradient-to-r from-violet-650 via-fuchsia-600 to-indigo-650 text-white font-extrabold text-sm rounded-full flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-fuchsia-550/20 hover:scale-[1.02] transition-all">
-              <span>{lang === "ka" ? "დაიწყე თამაში" : "Start the Game"}</span>
-              <ArrowRight className="w-4 h-4" />
+          <div className="flex w-full flex-col gap-3 pt-2 sm:w-auto sm:flex-row">
+            <button
+              type="button"
+              onClick={handleStartGameClick}
+              className="flex cursor-pointer items-center justify-center gap-2 rounded-full bg-gradient-to-r from-violet-700 via-fuchsia-600 to-indigo-700 px-6 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-fuchsia-900/20 transition-all hover:scale-[1.02]"
+            >
+              <span>{lang === 'ka' ? 'დაიწყე თამაში' : 'Start the Game'}</span>
+              <ArrowRight className="h-4 w-4" />
             </button>
-            <button onClick={handleViewMarathonsClick} className="px-6 py-3.5 bg-white/5 text-white border border-white/10 rounded-full flex items-center justify-center gap-2 cursor-pointer hover:bg-white/10 transition-all">
-              <Play className="w-4 h-4 text-fuchsia-400 fill-fuchsia-400" />
-              <span>{lang === "ka" ? "ნახე როგორ მუშაობს" : "See How It Works"}</span>
+
+            <button
+              type="button"
+              onClick={handleViewMarathonsClick}
+              className="flex cursor-pointer items-center justify-center gap-2 rounded-full border border-white/10 bg-white/5 px-6 py-3.5 text-white transition-all hover:bg-white/10"
+            >
+              <Play className="h-4 w-4 fill-fuchsia-400 text-fuchsia-400" />
+              <span>
+                {lang === 'ka' ? 'ნახე როგორ მუშაობს' : 'See How It Works'}
+              </span>
             </button>
           </div>
         </div>
       </section>
 
-      {/* 🔮 ორიგინალური გლობალური ორსვეტიანი ბადე გვერდითა სექციებისთვის */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 lg:px-12 py-12 flex flex-col lg:flex-row gap-8">
-        {/* 👉 მარცხენა სვეტი: საჯარო კედელი, მარათონები, ფასეულობები, წესები */}
+      <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-12 sm:px-8 lg:flex-row lg:px-12">
         <div className="flex-1 space-y-12">
-
-          {/* 🌟 სასაჩვენებელი საჯარო სიმამაცის კედელი */}
-          <div id="submissions-showcase" className="bg-[#FFF0E8] border border-[#E3DDF4] rounded-[32px] p-6 sm:p-10 shadow-[0_12px_30px_rgba(94,88,120,0.04)] space-y-6 text-left">
+          <div
+            id="submissions-showcase"
+            className="space-y-6 rounded-[32px] border border-[#E3DDF4] bg-[#FFF0E8] p-6 text-left shadow-[0_12px_30px_rgba(94,88,120,0.04)] sm:p-10"
+          >
             <div className="space-y-2">
-              <div className="inline-flex items-center gap-1.5 bg-[#FF9B6A]/10 border border-[#FF9B6A]/20 px-3.5 py-1 text-xs text-[#FF9B6A] font-extrabold uppercase rounded-full">
-                საჯარო სიმამაცის კედელი
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-[#FF9B6A]/20 bg-[#FF9B6A]/10 px-3.5 py-1 text-xs font-extrabold uppercase text-[#FF9B6A]">
+                {lang === 'ka'
+                  ? 'საჯარო სიმამაცის კედელი'
+                  : 'Public Courage Wall'}
               </div>
-              <h2 className="text-2xl md:text-3xl font-black text-[#27213F] tracking-tight">
-                კომპლექსები, შიში და <span className="text-[#FF9B6A]">სოციალური სიმამაცე</span>
+
+              <h2 className="text-2xl font-black tracking-tight text-[#27213F] md:text-3xl">
+                {lang === 'ka' ? 'კომპლექსები, შიში და ' : 'Complexes, fear and '}
+                <span className="text-[#FF9B6A]">
+                  {lang === 'ka' ? 'სოციალური სიმამაცე' : 'social courage'}
+                </span>
               </h2>
-              <p className="text-xs md:text-sm text-[#5E5878] font-light">
-                {lang === "ka" 
-                  ? "მოთამაშეები იღებენ ფსიქოლოგიურ და კრეატიულ გამოწვევებს, წერენ ვიდეოს და უზიარებენ ერთმანეთს." 
-                  : "Players accept psychological and creative challenges, record videos, and share them with each other."}
+
+              <p className="text-xs font-light text-[#5E5878] md:text-sm">
+                {lang === 'ka'
+                  ? 'აქ ჩანს მხოლოდ ის შესრულებული გამოწვევები, რომელთა გასაჯაროებაზეც მოთამაშემ თანხმობა მისცა.'
+                  : 'Only submissions marked public by players appear here.'}
               </p>
+
+              {voteMessage && (
+                <div className="rounded-2xl border border-orange-100 bg-white/80 p-3 text-xs font-bold text-[#FF7A45]">
+                  {voteMessage}
+                </div>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
-              {currentFeedSubmissions.map((sub: any) => (
-                <div 
-                  key={sub.id} 
-                  onClick={() => setActiveMediaSub(sub)}
-                  className="group flex flex-col bg-white rounded-[24px] border border-[#E8E2F1] overflow-hidden hover:shadow-xl transition-all duration-300 relative cursor-pointer"
-                >
-                  <div className="aspect-video relative overflow-hidden bg-slate-950 select-none">
-                    {(() => {
-                      const url = sub.fileUrl || sub.videoUrl || "";
-                      const isImage = url.startsWith("data:image/") || url.endsWith(".png") || url.endsWith(".jpg") || url.endsWith(".jpeg") || url.includes("images.unsplash.com");
-                      const isAudio = url.startsWith("data:audio/") || url.endsWith(".mp3") || url.endsWith(".wav") || url.includes("audio");
+            {currentFeedSubmissions.length === 0 ? (
+              <div className="rounded-[24px] border border-dashed border-[#FF9B6A]/30 bg-white/70 p-8 text-center">
+                <p className="text-sm font-black text-[#27213F]">
+                  {lang === 'ka'
+                    ? 'საჯარო შესრულებული გამოწვევები ჯერ არ არის.'
+                    : 'No public submissions yet.'}
+                </p>
 
-                      if (isImage) {
-                        return (
-                          <img 
-                            className="w-full h-full object-cover opacity-90 transition-transform duration-500 group-hover:scale-105 bg-slate-950" 
-                            src={url} 
-                            alt={sub.challengeTitle || "Submission"} 
-                            referrerPolicy="no-referrer"
+                <p className="mt-2 text-xs font-medium text-[#5E5878]">
+                  {lang === 'ka'
+                    ? 'როცა მოთამაშე დავალებას საჯაროდ ატვირთავს, ის აქ გამოჩნდება.'
+                    : 'When a player uploads a public proof, it will appear here.'}
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-3">
+                {currentFeedSubmissions.map((sub: any) => {
+                  const guestVoterId =
+                    typeof window !== 'undefined'
+                      ? localStorage.getItem('bifurcation_guest_voter_id')
+                      : null;
+                  const voterId = currentUser ? currentUser.id : guestVoterId;
+                  const likedBy = sub.likedBy || [];
+                  const hasLiked = Boolean(voterId && likedBy.includes(voterId));
+                  const voteCount = likedBy.length || sub.votes || 0;
+
+                  return (
+                    <div
+                      key={sub.id}
+                      onClick={() => setActiveMediaSub(sub)}
+                      className="group relative flex cursor-pointer flex-col overflow-hidden rounded-[24px] border border-[#E8E2F1] bg-white transition-all duration-300 hover:shadow-xl"
+                    >
+                      <div className="relative aspect-video select-none overflow-hidden bg-slate-950">
+                        {renderSubmissionMedia(sub, 'card')}
+
+                        <div
+                          className="absolute left-4 top-4 z-10 flex items-center gap-2 rounded-xl border bg-white/95 px-3 py-1.5"
+                          onClick={event => event.stopPropagation()}
+                        >
+                          <img
+                            src={getPlayerAvatar(
+                              sub.playerNickname,
+                              sub.playerAvatar
+                            )}
+                            className="h-5 w-5 rounded-full object-cover"
+                            alt="avatar"
                           />
-                        );
-                      }
 
-                      if (isAudio) {
-                        return (
-                          <div className="w-full h-full flex flex-col items-center justify-center bg-[#0f0b21] hover:bg-[#15102a] transition-colors p-4 text-center select-none">
-                            <div className="w-12 h-12 rounded-full bg-[#7C4DFF]/15 text-[#7C4DFF] flex items-center justify-center mb-2">
-                              <span className="text-xl">🎵</span>
-                            </div>
-                            <span className="text-[10px] text-purple-300 font-extrabold uppercase font-mono tracking-wider">Audio Evidence</span>
-                          </div>
-                        );
-                      }
+                          <span className="max-w-[110px] truncate text-[11px] font-extrabold text-[#27213F]">
+                            @{sub.playerNickname}
+                          </span>
+                        </div>
+                      </div>
 
-                      return (
-                        <video 
-                          className="w-full h-full object-cover opacity-90 transition-transform duration-500 group-hover:scale-105" 
-                          src={url} 
-                          loop 
-                          muted 
-                          playsInline 
-                          autoPlay 
-                        />
-                      );
-                    })()}
-                    <div className="absolute top-4 left-4 z-10 flex items-center gap-2 bg-white/95 px-3 py-1.5 rounded-xl border" onClick={(e) => e.stopPropagation()}>
-                      <img src={getPlayerAvatar(sub.playerNickname, sub.playerAvatar)} className="w-5 h-5 rounded-full object-cover" alt="avatar" />
-                      <span className="text-[11px] text-[#27213F] font-extrabold max-w-[100px] truncate">{sub.playerNickname}</span>
-                    </div>
-                  </div>
-                  <div className="p-5 space-y-3.5 bg-white flex-1 flex flex-col justify-between">
-                    <div>
-                      <h4 className="font-extrabold text-base text-[#27213F] line-clamp-2 leading-snug group-hover:text-[#FF9B6A] transition-colors">{sub.challengeTitle}</h4>
-                      <p className="text-xs text-[#5E5878] line-clamp-3 leading-relaxed font-light mt-1">{sub.textDescription || sub.comment}</p>
-                    </div>
-                    {/* გულის ხმის მიცემა და მხარდაჭერა - სრულად დეკუპლირებული stopPropagation-ით */}
-                    <div className="flex justify-between items-center text-xs pt-4 border-t border-[#E8E2F1] mt-2" onClick={(e) => e.stopPropagation()}>
-                      {(() => {
-                        const guestVoterId = typeof window !== 'undefined' ? localStorage.getItem("bifurcation_guest_voter_id") : null;
-                        const voterId = currentUser ? currentUser.id : guestVoterId;
-                        const hasLiked = voterId && sub.likedBy?.includes(voterId);
+                      <div className="flex flex-1 flex-col justify-between space-y-3.5 bg-white p-5">
+                        <div>
+                          <h4 className="line-clamp-2 text-base font-extrabold leading-snug text-[#27213F] transition-colors group-hover:text-[#FF9B6A]">
+                            {sub.challengeTitle}
+                          </h4>
 
-                        return (
-                          <span 
-                            className={`font-extrabold flex items-center gap-1.5 cursor-pointer transition-colors ${hasLiked ? "text-rose-600 font-black" : "text-[#5E5878] hover:text-rose-600"}`}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
+                          <p className="mt-1 line-clamp-3 text-xs font-light leading-relaxed text-[#5E5878]">
+                            {getSubmissionText(sub) ||
+                              (lang === 'ka'
+                                ? 'მოთამაშემ გამოწვევა საჯაროდ შეასრულა.'
+                                : 'The player completed this challenge publicly.')}
+                          </p>
+                        </div>
+
+                        <div
+                          className="mt-2 flex items-center justify-between border-t border-[#E8E2F1] pt-4 text-xs"
+                          onClick={event => event.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            className={`flex cursor-pointer items-center gap-1.5 font-extrabold transition-colors ${
+                              hasLiked
+                                ? 'text-rose-600'
+                                : 'text-[#5E5878] hover:text-rose-600'
+                            }`}
+                            onClick={event => {
+                              event.preventDefault();
+                              event.stopPropagation();
                               handleVoteAction(sub);
                             }}
                           >
-                            <Heart className={`w-4 h-4 transition-transform hover:scale-115 ${hasLiked ? "text-rose-500 fill-rose-500 scale-105" : "text-rose-400 fill-none"}`} />
-                            {sub.likedBy?.length || sub.votes || 0} {lang === "ka" ? "ხმა" : "votes"}
-                          </span>
-                        );
-                      })()}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleVoteAction(sub);
-                        }}
-                        className="bg-[#FFF0E8] hover:bg-[#FF9B6A] hover:text-white text-[#FF9B6A] border border-[#FF9B6A]/20 font-extrabold px-3.5 py-1.5 rounded-lg transition-all cursor-pointer"
-                      >
-                        👍 {lang === "ka" ? "მხარდაჭერა" : "Vote"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+                            <Heart
+                              className={`h-4 w-4 transition-transform hover:scale-110 ${
+                                hasLiked
+                                  ? 'fill-rose-500 text-rose-500'
+                                  : 'fill-none text-rose-400'
+                              }`}
+                            />
 
-          {/* 🌟 მარათონების პანელი (ივნისი, ივლისი, აგვისტო, სექტემბერი) */}
-          <div id="marathons-dashboard" className="bg-[#EAF8F2] border border-[#E3DDF4] rounded-[32px] p-6 sm:p-10 text-left space-y-6">
-            <div className="space-y-2">
-              <span className="bg-[#32B88A]/10 text-[#32B88A] text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider">მარათონები</span>
-              <h2 className="text-2xl md:text-3xl font-black text-[#27213F]">{lang === "ka" ? "ბიფურკაციის ყოველთვიური მარათონები" : "Monthly Marathons"}</h2>
-            </div>
+                            <span>
+                              {voteCount} {lang === 'ka' ? 'ხმა' : 'votes'}
+                            </span>
+                          </button>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              {marathons.map((m: any) => {
-                const playerRecord = currentUser ? monthlyPlayerRecords.find(r => r.playerId === currentUser.id && r.marathonId === m.id) : null;
-                const isJoined = playerRecord && playerRecord.participationConfirmed;
-                const completedCount = playerRecord ? playerRecord.completedChallenges?.length || 0 : 0;
-                
-                return (
-                  <div key={m.id} className={`p-6 rounded-[24px] border bg-white flex flex-col justify-between text-left transition-all hover:shadow-md ${m.status === "active" ? "border-2 border-[#32B88A]" : "border-slate-200"}`}>
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-center">
-                        <span className="text-3xl select-none">{getMonthEmoji(m.id)}</span>
-                        <span className="text-[9px] font-black px-2.5 py-1 bg-slate-100 rounded-full uppercase tracking-wider">{m.status}</span>
-                      </div>
-                      <h3 className="font-extrabold text-base text-[#27213F] leading-snug">{lang === "ka" ? m.title_ka : m.title_en}</h3>
-                      <p className="text-[11px] text-slate-400 font-mono">{getCountdownText(m.endDate, lang)}</p>
-                      
-                      {isJoined && (
-                        <div className="p-3 bg-emerald-50/60 rounded-xl space-y-2 text-xs border border-emerald-100">
-                          <div className="flex justify-between font-bold text-slate-700">
-                            <span>პროგრესი:</span>
-                            <span className="text-[#32B88A] font-black">{completedCount} / 10</span>
-                          </div>
-                          <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
-                            <div className="bg-[#32B88A] h-full transition-all" style={{ width: `${(completedCount / 10) * 100}%` }}></div>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={event => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              handleVoteAction(sub);
+                            }}
+                            className="cursor-pointer rounded-lg border border-[#FF9B6A]/20 bg-[#FFF0E8] px-3.5 py-1.5 font-extrabold text-[#FF9B6A] transition-all hover:bg-[#FF9B6A] hover:text-white"
+                          >
+                            👍 {lang === 'ka' ? 'მხარდაჭერა' : 'Vote'}
+                          </button>
                         </div>
-                      )}
-                    </div>
-
-                    <div className="pt-4 mt-4 border-t border-slate-100">
-                      {/* 🚀 სრულად ამუშავებული ფუნქციონალური ღილაკი ნებისმიერი ადამიანისთვის (სტუმარი თუ რეგისტრირებული) */}
-                      <button 
-                        type="button" 
-                        onClick={() => setSelectedPreviewMarathon(m)} 
-                        className="w-full py-2.5 bg-[#EAF8F2] hover:bg-[#32B88A] text-[#32B88A] hover:text-white rounded-xl text-xs font-black transition-all cursor-pointer text-center block"
-                      >
-                        {isJoined ? (lang === "ka" ? "გახსნა 🚀" : "Open 🚀") : (lang === "ka" ? "გამოწვევები 📋" : "Challenges 📋")}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* სექცია 4: ფასეულობები და ეთიკა */}
-          <div id="values-section" className="bg-[#EAF3FF] border border-[#E3DDF4] rounded-[32px] p-6 sm:p-10 text-left space-y-6">
-            <div className="text-center space-y-1 max-w-xl mx-auto">
-              <span className="px-3 py-1 bg-[#4C8DFF]/10 text-[#4C8DFF] text-[10px] font-black uppercase rounded-full tracking-wider">ფასეულობები</span>
-              <h3 className="text-2xl font-black text-[#27213F]">ფასეულობები & ეთიკა</h3>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-5 gap-5">
-              {values.map((v, i) => {
-                const Icon = v.icon;
-                return (
-                  <div key={i} className="bg-white border border-[#E8E2F1] p-5 rounded-2xl text-left space-y-2 hover:shadow-sm transition-all">
-                    <div className="w-9 h-9 rounded-xl bg-[#EAF3FF] text-[#4C8DFF] flex items-center justify-center font-bold"><Icon className="w-4 h-4" /></div>
-                    <h5 className="font-black text-xs text-[#27213F] uppercase tracking-tight">{v.title}</h5>
-                    <p className="text-[11px] text-[#5E5878] font-light leading-relaxed">{v.desc}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* სექცია 5: თამაშის ოფიციალური წესები */}
-          <div id="conditions-section" className="bg-[#FFF0F6] border border-[#E3DDF4] rounded-[32px] p-6 sm:p-10 text-left space-y-6">
-            <div className="text-center space-y-1 max-w-xl mx-auto">
-              <span className="px-3 py-1 bg-[#E76FD6]/10 text-[#E76FD6] text-[10px] font-black uppercase rounded-full tracking-wider">ინსტრუქცია</span>
-              <h3 className="text-2xl font-black text-[#27213F]">თამაშის ოფიციალური წესები</h3>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-              {rules.map((r, idx) => {
-                const Icon = r.icon;
-                return (
-                  <div key={idx} className="p-5 rounded-2xl border border-[#E8E2F1] bg-white text-left space-y-2 hover:scale-[1.01] transition-transform">
-                    <div className="w-8 h-8 rounded-lg bg-[#FFF0F6] text-[#E76FD6] flex items-center justify-center"><Icon className="w-4 h-4" /></div>
-                    <h5 className="font-black text-xs text-[#27213F] leading-snug">{r.title}</h5>
-                    <p className="text-[11px] text-[#5E5878] font-light leading-relaxed">{r.desc}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-        </div>
-
-        {/* 👉 მარჯვენა სვეტი: LIVE რეიტინგი */}
-        <div className="w-full lg:w-76 shrink-0 lg:sticky lg:top-24">
-          <LiveLeaderboardSidebar currentUser={currentUser} lang={lang === "ka" ? "ka" : "en"} monthlyPlayerRecords={monthlyPlayerRecords} />
-        </div>
-
-      </div>
-
-      {/* 🎬 მედია მოდალი საჯარო ვიდეოების/ფოტოების/აუდიოების სრულეკრანიანი ჩვენებისთვის */}
-      {activeMediaSub && (() => {
-        const liveActiveSub = submissions?.find(s => s.id === activeMediaSub.id) || activeMediaSub;
-        const url = liveActiveSub.fileUrl || liveActiveSub.videoUrl;
-        const guestVoterId = typeof window !== 'undefined' ? localStorage.getItem("bifurcation_guest_voter_id") : null;
-        const voterId = currentUser ? currentUser.id : guestVoterId;
-        const hasLiked = voterId && liveActiveSub.likedBy?.includes(voterId);
-
-        return (
-          <div className="fixed inset-0 z-55 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl p-5 max-w-md w-full relative text-left space-y-3 shadow-2xl border">
-              <button onClick={() => setActiveMediaSub(null)} className="absolute top-4 right-4 text-slate-400 font-bold hover:text-black w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center cursor-pointer">✕</button>
-              <span className="text-[10px] uppercase font-black text-[#7C4DFF] tracking-widest bg-purple-50 px-2.5 py-0.5 rounded-full inline-block">მტკიცებულება</span>
-              <h4 className="text-base font-extrabold text-[#27213F] pr-6">{liveActiveSub.challengeTitle}</h4>
-              <div className="relative aspect-[16/10] bg-black rounded-2xl overflow-hidden flex items-center justify-center">
-                {(() => {
-                  if (!url) {
-                    return (
-                      <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-slate-400 p-6 text-center">
-                        <p className="text-xs font-semibold">{lang === "ka" ? "მედია ფაილი არ არის" : "No media file"}</p>
-                      </div>
-                    );
-                  }
-
-                  const type = liveActiveSub.submissionType || "";
-                  const isImage = type === "photo" || 
-                                  url.match(/\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i) || 
-                                  url.startsWith("data:image/");
-
-                  const isAudio = type === "audio" || 
-                                  url.match(/\.(mp3|wav|ogg|aac|m4a)($|\?)/i) || 
-                                  url.startsWith("data:audio/");
-
-                  if (isImage) {
-                    return (
-                      <img 
-                        src={url} 
-                        className="w-full h-full object-contain bg-slate-950 mx-auto" 
-                        alt={liveActiveSub.challengeTitle || "Submission"} 
-                        referrerPolicy="no-referrer"
-                      />
-                    );
-                  }
-
-                  if (isAudio) {
-                    return (
-                      <div className="w-full h-full flex flex-col items-center justify-center bg-slate-950 p-6 text-white space-y-4">
-                        <div className="w-16 h-16 rounded-full bg-[#7C4DFF]/20 text-[#7C4DFF] flex items-center justify-center animate-bounce">
-                          <span className="text-3xl">🎵</span>
-                        </div>
-                        <audio src={url} className="w-4/5 mx-auto" controls autoPlay />
-                        <p className="text-[10px] text-slate-400 font-mono select-none uppercase tracking-wider">AUDIO PLAYBACK</p>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <video 
-                      src={url} 
-                      className="w-full h-full object-contain bg-slate-950" 
-                      controls 
-                      autoPlay 
-                      playsInline 
-                    />
-                  );
-                })()}
-              </div>
-
-              {/* მოთამაშის კომენტარი */}
-              <div className="bg-slate-50 border p-3 rounded-xl text-xs text-slate-700 leading-relaxed font-sans">
-                <strong className="text-[#27213F] block mb-1">მოთამაშის კომენტარი:</strong>
-                {liveActiveSub.textDescription || liveActiveSub.comment}
-              </div>
-
-              {/* 💖 მხარდაჭერის ღილაკი და გულები მოდალში */}
-              <div className="flex justify-between items-center text-xs pt-3 border-t border-[#E8E2F1]">
-                <span 
-                  className={`font-extrabold flex items-center gap-1.5 cursor-pointer transition-colors ${hasLiked ? "text-rose-600 font-black" : "text-[#5E5878] hover:text-rose-600"}`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleVoteAction(liveActiveSub);
-                  }}
-                >
-                  <Heart className={`w-4 h-4 transition-transform hover:scale-115 ${hasLiked ? "text-rose-500 fill-rose-500 scale-105" : "text-rose-400 fill-none"}`} />
-                  {liveActiveSub.likedBy?.length || liveActiveSub.votes || 0} {lang === "ka" ? "ხმა" : "votes"}
-                </span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleVoteAction(liveActiveSub);
-                  }}
-                  className="bg-[#FFF0E8] hover:bg-[#FF9B6A] hover:text-white text-[#FF9B6A] border border-[#FF9B6A]/20 font-extrabold px-3.5 py-1.5 rounded-lg transition-all cursor-pointer text-xs"
-                >
-                  👍 {lang === "ka" ? "მხარდაჭერა" : "Vote"}
-                </button>
-              </div>
-
-              {/* ჩვეულ ფორმაში დაბრუნება (დახურვის ღილაკი ქვევითაც) */}
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveMediaSub(null)}
-                  className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                >
-                  <X className="w-4 h-4 text-slate-500" />
-                  <span>{lang === "ka" ? "ჩვეულ ფორმაში დაბრუნება" : "Return to Site Layout"}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* 🌟 ყოველთვიური მარათონის გამოწვევების დეტალური განხილვის მოდალი */}
-      {selectedPreviewMarathon && (() => {
-        const m = selectedPreviewMarathon;
-        const challs = getPreviewChallenges(m);
-        
-        return (
-          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 antialiased">
-            <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-4xl w-full border border-violet-100 shadow-2xl text-left space-y-6 max-h-[92vh] overflow-y-auto relative">
-              
-              <button 
-                type="button" 
-                onClick={() => setSelectedPreviewMarathon(null)} 
-                className="absolute top-4 right-4 text-slate-400 font-bold hover:text-black cursor-pointer w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center transition-colors"
-              >
-                ✕
-              </button>
-              
-              <div className="space-y-1 pr-8">
-                <span className="bg-[#7C4DFF]/10 text-[#7C4DFF] text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider">
-                  ✨ {lang === "ka" ? "ხელოვნური ინტელექტის გამოწვევები" : "AI Generated Challenges"}
-                </span>
-                <h3 className="font-extrabold text-2xl text-[#1E1B35] leading-tight">
-                  {lang === "ka" ? m.title_ka : m.title_en}
-                </h3>
-                <p className="text-xs text-slate-500 font-medium">
-                  {lang === "ka" 
-                    ? "მარტივი, საშუალო და რთული გამოწვევები ბალანსითა და დადგენილი ქულებით." 
-                    : "10 balanced challenges categorised by difficulty levels and points rewards."}
-                </p>
-              </div>
-
-              {/* Grid Layout of 10 challenges */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {challs.map((c: any, index: number) => {
-                  const diffColors = c.difficulty === "easy" 
-                    ? "bg-emerald-50 text-emerald-850 hover:bg-emerald-100 border-emerald-100" 
-                    : c.difficulty === "medium" 
-                      ? "bg-amber-50 text-amber-850 hover:bg-amber-100 border-amber-100" 
-                      : "bg-purple-50 text-purple-850 hover:bg-purple-105 border-purple-100";
-
-                  return (
-                    <div 
-                      key={c.id}
-                      onClick={() => setSelectedPreviewChallenge(c)}
-                      className="p-4 bg-[#FAF8FF] border border-violet-100/50 hover:border-[#7C4DFF]/40 rounded-2xl cursor-pointer transition-all hover:scale-[1.01] hover:shadow-xs space-y-3 relative group"
-                    >
-                      <div className="flex justify-between items-start gap-2">
-                        <span className="text-[10px] font-bold text-slate-400 font-mono">#{index + 1}</span>
-                        <div className="flex items-center gap-1.5">
-                          <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${diffColors}`}>
-                            {lang === "ka" 
-                              ? (c.difficulty === "easy" ? "ადვილი" : c.difficulty === "medium" ? "საშუალო" : "რთული") 
-                              : c.difficulty}
-                          </span>
-                          <span className="text-[10px] font-black bg-amber-50 text-amber-900 border border-amber-100 px-2 py-0.5 rounded-md">
-                            🪙 {c.completionReward || c.points || 20}
-                          </span>
-                        </div>
-                      </div>
-
-                      <h4 className="font-extrabold text-[#27213F] text-xs leading-snug group-hover:text-[#7C4DFF] transition-colors line-clamp-2">
-                        {lang === "ka" ? (c.title_ka || c.title) : (c.title_en || c.title)}
-                      </h4>
-
-                      <p className="text-[11px] text-slate-500 font-medium line-clamp-2 leading-relaxed">
-                        {lang === "ka" ? (c.description_ka || c.description) : (c.description_en || c.description)}
-                      </p>
-
-                      <div className="flex justify-end pt-1">
-                        <span className="text-[9px] font-extrabold text-[#7C4DFF] group-hover:underline flex items-center gap-1">
-                          {lang === "ka" ? "დეტალების ნახვა ➔" : "View Details ➔"}
-                        </span>
                       </div>
                     </div>
                   );
                 })}
               </div>
+            )}
+          </div>
 
-              {/* Bottom Action Footer */}
-              <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row justify-between items-center gap-4">
-                <p className="text-[11px] text-slate-400 font-mono">
-                  {lang === "ka" 
-                    ? "📍 თამაშში ჩასართავად და ქულების მოსაგროვებლად გადადით შესაბამის მარათონზე" 
-                    : "📍 To start playing and collecting points, navigate to this marathon's workspace"}
-                </p>
-                <div className="flex gap-2 w-full sm:w-auto">
+          <div
+            id="marathons-dashboard"
+            className="space-y-6 rounded-[32px] border border-[#E3DDF4] bg-[#EAF8F2] p-6 text-left sm:p-10"
+          >
+            <div className="space-y-2">
+              <span className="rounded-full bg-[#32B88A]/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-[#32B88A]">
+                {lang === 'ka' ? 'მარათონები' : 'Marathons'}
+              </span>
+
+              <h2 className="text-2xl font-black text-[#27213F] md:text-3xl">
+                {lang === 'ka'
+                  ? 'ბიფურკაციის ყოველთვიური მარათონები'
+                  : 'Monthly Marathons'}
+              </h2>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              {allMarathons.map((marathon: any) => {
+                const playerRecord = currentUser
+                  ? monthlyPlayerRecords.find(
+                      record =>
+                        record.playerId === currentUser.id &&
+                        normalizeId(record.marathonId) === normalizeId(marathon.id)
+                    )
+                  : null;
+
+                const isJoined =
+                  playerRecord && playerRecord.participationConfirmed;
+                const completedCount =
+                  playerRecord?.completedChallenges?.length || 0;
+
+                return (
+                  <div
+                    key={marathon.id}
+                    className={`flex flex-col justify-between rounded-[24px] border bg-white p-6 text-left transition-all hover:shadow-md ${
+                      marathon.status === 'active'
+                        ? 'border-2 border-[#32B88A]'
+                        : 'border-slate-200'
+                    }`}
+                  >
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <span className="select-none text-3xl">
+                          {getMonthEmoji(marathon.id)}
+                        </span>
+
+                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-slate-600">
+                          {marathon.status || 'soon'}
+                        </span>
+                      </div>
+
+                      <h3 className="text-base font-extrabold leading-snug text-[#27213F]">
+                        {lang === 'ka'
+                          ? marathon.title_ka || marathon.title
+                          : marathon.title_en || marathon.title}
+                      </h3>
+
+                      <p className="font-mono text-[11px] text-slate-400">
+                        {getCountdownText(marathon.endDate, lang)}
+                      </p>
+
+                      {isJoined && (
+                        <div className="space-y-2 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3 text-xs">
+                          <div className="flex justify-between font-bold text-slate-700">
+                            <span>{lang === 'ka' ? 'პროგრესი:' : 'Progress:'}</span>
+                            <span className="font-black text-[#32B88A]">
+                              {completedCount} / 10
+                            </span>
+                          </div>
+
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                            <div
+                              className="h-full bg-[#32B88A] transition-all"
+                              style={{
+                                width: `${Math.min(
+                                  100,
+                                  (completedCount / 10) * 100
+                                )}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-4 border-t border-slate-100 pt-4">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPreviewMarathon(marathon)}
+                        className="block w-full cursor-pointer rounded-xl bg-[#EAF8F2] py-2.5 text-center text-xs font-black text-[#32B88A] transition-all hover:bg-[#32B88A] hover:text-white"
+                      >
+                        {isJoined
+                          ? lang === 'ka'
+                            ? 'გახსნა 🚀'
+                            : 'Open 🚀'
+                          : lang === 'ka'
+                            ? 'გამოწვევები 📋'
+                            : 'Challenges 📋'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div
+            id="values-section"
+            className="space-y-6 rounded-[32px] border border-[#E3DDF4] bg-[#EAF3FF] p-6 text-left sm:p-10"
+          >
+            <div className="mx-auto max-w-xl space-y-1 text-center">
+              <span className="rounded-full bg-[#4C8DFF]/10 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-[#4C8DFF]">
+                {lang === 'ka' ? 'ფასეულობები' : 'Values'}
+              </span>
+
+              <h3 className="text-2xl font-black text-[#27213F]">
+                {lang === 'ka' ? 'ფასეულობები & ეთიკა' : 'Values & Ethics'}
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-5">
+              {values.map((value, index) => {
+                const Icon = value.icon;
+
+                return (
+                  <div
+                    key={index}
+                    className="space-y-2 rounded-2xl border border-[#E8E2F1] bg-white p-5 text-left transition-all hover:shadow-sm"
+                  >
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#EAF3FF] font-bold text-[#4C8DFF]">
+                      <Icon className="h-4 w-4" />
+                    </div>
+
+                    <h5 className="text-xs font-black uppercase tracking-tight text-[#27213F]">
+                      {value.title}
+                    </h5>
+
+                    <p className="text-[11px] font-light leading-relaxed text-[#5E5878]">
+                      {value.desc}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div
+            id="conditions-section"
+            className="space-y-6 rounded-[32px] border border-[#E3DDF4] bg-[#FFF0F6] p-6 text-left sm:p-10"
+          >
+            <div className="mx-auto max-w-xl space-y-1 text-center">
+              <span className="rounded-full bg-[#E76FD6]/10 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-[#E76FD6]">
+                {lang === 'ka' ? 'ინსტრუქცია' : 'Instructions'}
+              </span>
+
+              <h3 className="text-2xl font-black text-[#27213F]">
+                {lang === 'ka'
+                  ? 'თამაშის ოფიციალური წესები'
+                  : 'Official Game Rules'}
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+              {rules.map((rule, index) => {
+                const Icon = rule.icon;
+
+                return (
+                  <div
+                    key={index}
+                    className="space-y-2 rounded-2xl border border-[#E8E2F1] bg-white p-5 text-left transition-transform hover:scale-[1.01]"
+                  >
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#FFF0F6] text-[#E76FD6]">
+                      <Icon className="h-4 w-4" />
+                    </div>
+
+                    <h5 className="text-xs font-black leading-snug text-[#27213F]">
+                      {rule.title}
+                    </h5>
+
+                    <p className="text-[11px] font-light leading-relaxed text-[#5E5878]">
+                      {rule.desc}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="w-full shrink-0 lg:sticky lg:top-24 lg:w-76">
+          <LiveLeaderboardSidebar
+            currentUser={currentUser}
+            lang={lang === 'ka' ? 'ka' : 'en'}
+            monthlyPlayerRecords={monthlyPlayerRecords}
+          />
+        </div>
+      </div>
+
+      {activeMediaSub &&
+        (() => {
+          const liveActiveSub =
+            currentFeedSubmissions.find(item => item.id === activeMediaSub.id) ||
+            activeMediaSub;
+
+          const guestVoterId =
+            typeof window !== 'undefined'
+              ? localStorage.getItem('bifurcation_guest_voter_id')
+              : null;
+
+          const voterId = currentUser ? currentUser.id : guestVoterId;
+          const likedBy = liveActiveSub.likedBy || [];
+          const hasLiked = Boolean(voterId && likedBy.includes(voterId));
+          const voteCount = likedBy.length || liveActiveSub.votes || 0;
+
+          return (
+            <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
+              <div className="relative w-full max-w-2xl space-y-4 rounded-3xl border bg-white p-5 text-left shadow-2xl">
+                <button
+                  type="button"
+                  onClick={() => setActiveMediaSub(null)}
+                  className="absolute right-4 top-4 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-slate-100 font-bold text-slate-400 hover:text-black"
+                >
+                  ✕
+                </button>
+
+                <div className="flex items-center gap-3 pr-8">
+                  <img
+                    src={getPlayerAvatar(
+                      liveActiveSub.playerNickname,
+                      liveActiveSub.playerAvatar
+                    )}
+                    className="h-10 w-10 rounded-full object-cover"
+                    alt="avatar"
+                  />
+
+                  <div>
+                    <span className="inline-block rounded-full bg-purple-50 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest text-[#7C4DFF]">
+                      {lang === 'ka' ? 'მტკიცებულება' : 'Proof'}
+                    </span>
+
+                    <h4 className="mt-1 text-base font-extrabold text-[#27213F]">
+                      {liveActiveSub.challengeTitle}
+                    </h4>
+
+                    <p className="text-xs font-bold text-slate-500">
+                      @{liveActiveSub.playerNickname}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-2xl bg-black">
+                  {renderSubmissionMedia(liveActiveSub, 'modal')}
+                </div>
+
+                <div className="rounded-xl border bg-slate-50 p-3 text-xs leading-relaxed text-slate-700">
+                  <strong className="mb-1 block text-[#27213F]">
+                    {lang === 'ka' ? 'მოთამაშის კომენტარი:' : 'Player comment:'}
+                  </strong>
+
+                  {getSubmissionText(liveActiveSub) ||
+                    (lang === 'ka'
+                      ? 'კომენტარი არ არის დამატებული.'
+                      : 'No comment added.')}
+                </div>
+
+                <div className="flex items-center justify-between border-t border-[#E8E2F1] pt-3 text-xs">
                   <button
                     type="button"
-                    onClick={() => setSelectedPreviewMarathon(null)}
-                    className="flex-1 sm:flex-none px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black rounded-xl transition-all cursor-pointer whitespace-nowrap"
+                    className={`flex cursor-pointer items-center gap-1.5 font-extrabold transition-colors ${
+                      hasLiked
+                        ? 'text-rose-600'
+                        : 'text-[#5E5878] hover:text-rose-600'
+                    }`}
+                    onClick={event => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      handleVoteAction(liveActiveSub);
+                    }}
                   >
-                    {lang === "ka" ? "დახურვა" : "Close"}
+                    <Heart
+                      className={`h-4 w-4 transition-transform hover:scale-110 ${
+                        hasLiked
+                          ? 'fill-rose-500 text-rose-500'
+                          : 'fill-none text-rose-400'
+                      }`}
+                    />
+
+                    {voteCount} {lang === 'ka' ? 'ხმა' : 'votes'}
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={event => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      handleVoteAction(liveActiveSub);
+                    }}
+                    className="cursor-pointer rounded-lg border border-[#FF9B6A]/20 bg-[#FFF0E8] px-3.5 py-1.5 text-xs font-extrabold text-[#FF9B6A] transition-all hover:bg-[#FF9B6A] hover:text-white"
+                  >
+                    👍 {lang === 'ka' ? 'მხარდაჭერა' : 'Vote'}
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveMediaSub(null)}
+                  className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-slate-100 py-2.5 text-xs font-black text-slate-700 transition-all hover:bg-slate-200"
+                >
+                  <X className="h-4 w-4 text-slate-500" />
+                  <span>
+                    {lang === 'ka'
+                      ? 'ჩვეულ ფორმაში დაბრუნება'
+                      : 'Return to Site Layout'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
+      {selectedPreviewMarathon &&
+        (() => {
+          const marathon = selectedPreviewMarathon;
+          const challenges = getPreviewChallenges(marathon);
+
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md antialiased">
+              <div className="relative max-h-[92vh] w-full max-w-4xl space-y-6 overflow-y-auto rounded-3xl border border-violet-100 bg-white p-6 text-left shadow-2xl sm:p-8">
+                <button
+                  type="button"
+                  onClick={() => setSelectedPreviewMarathon(null)}
+                  className="absolute right-4 top-4 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-slate-100 font-bold text-slate-400 transition-colors hover:text-black"
+                >
+                  ✕
+                </button>
+
+                <div className="space-y-1 pr-8">
+                  <span className="rounded-full bg-[#7C4DFF]/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-[#7C4DFF]">
+                    ✨{' '}
+                    {lang === 'ka'
+                      ? 'ხელოვნური ინტელექტის გამოწვევები'
+                      : 'AI Generated Challenges'}
+                  </span>
+
+                  <h3 className="text-2xl font-extrabold leading-tight text-[#1E1B35]">
+                    {lang === 'ka'
+                      ? marathon.title_ka || marathon.title
+                      : marathon.title_en || marathon.title}
+                  </h3>
+
+                  <p className="text-xs font-medium text-slate-500">
+                    {lang === 'ka'
+                      ? 'მარტივი, საშუალო და რთული გამოწვევები ბალანსითა და დადგენილი ქულებით.'
+                      : '10 balanced challenges categorised by difficulty levels and points rewards.'}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {challenges.map((challenge: any, index: number) => {
+                    const difficultyLabel =
+                      lang === 'ka'
+                        ? challenge.difficulty === 'easy'
+                          ? 'ადვილი'
+                          : challenge.difficulty === 'medium'
+                            ? 'საშუალო'
+                            : 'რთული'
+                        : challenge.difficulty || 'medium';
+
+                    const difficultyClass =
+                      challenge.difficulty === 'easy'
+                        ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+                        : challenge.difficulty === 'medium'
+                          ? 'border-amber-100 bg-amber-50 text-amber-700'
+                          : 'border-purple-100 bg-purple-50 text-purple-700';
+
+                    return (
+                      <div
+                        key={challenge.id}
+                        onClick={() =>
+                          setSelectedPreviewChallenge({
+                            ...challenge,
+                            marathonId: marathon.id,
+                          })
+                        }
+                        className="group relative cursor-pointer space-y-3 rounded-2xl border border-violet-100/50 bg-[#FAF8FF] p-4 transition-all hover:scale-[1.01] hover:border-[#7C4DFF]/40"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-mono text-[10px] font-bold text-slate-400">
+                            #{index + 1}
+                          </span>
+
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`rounded-md border px-2 py-0.5 text-[9px] font-black uppercase tracking-wider ${difficultyClass}`}
+                            >
+                              {difficultyLabel}
+                            </span>
+
+                            <span className="rounded-md border border-amber-100 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-900">
+                              🪙{' '}
+                              {challenge.completionReward ||
+                                challenge.points ||
+                                20}
+                            </span>
+                          </div>
+                        </div>
+
+                        <h4 className="line-clamp-2 text-xs font-extrabold leading-snug text-[#27213F] transition-colors group-hover:text-[#7C4DFF]">
+                          {lang === 'ka'
+                            ? challenge.title_ka || challenge.title
+                            : challenge.title_en || challenge.title}
+                        </h4>
+
+                        <p className="line-clamp-2 text-[11px] font-medium leading-relaxed text-slate-500">
+                          {lang === 'ka'
+                            ? challenge.description_ka ||
+                              challenge.description
+                            : challenge.description_en ||
+                              challenge.description}
+                        </p>
+
+                        <div className="flex justify-end pt-1">
+                          <span className="flex items-center gap-1 text-[9px] font-extrabold text-[#7C4DFF] group-hover:underline">
+                            {lang === 'ka'
+                              ? 'დეტალების ნახვა ➔'
+                              : 'View Details ➔'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-col items-center justify-between gap-4 border-t border-slate-100 pt-4 sm:flex-row">
+                  <p className="font-mono text-[11px] text-slate-400">
+                    {lang === 'ka'
+                      ? '📍 თამაშში ჩასართავად გადადით შესაბამის მარათონზე.'
+                      : '📍 To start playing, navigate to this marathon workspace.'}
+                  </p>
+
+                  <div className="flex w-full gap-2 sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPreviewMarathon(null)}
+                      className="flex-1 cursor-pointer whitespace-nowrap rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-black text-slate-700 transition-all hover:bg-slate-200 sm:flex-none"
+                    >
+                      {lang === 'ka' ? 'დახურვა' : 'Close'}
+                    </button>
+
+                    {currentUser ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedPreviewMarathon(null);
+                          openChallengeWorkspace(marathon.id);
+                        }}
+                        className="flex-1 cursor-pointer whitespace-nowrap rounded-xl bg-[#7C4DFF] px-5 py-2.5 text-xs font-black text-white shadow-md transition-all hover:bg-[#6c3df0] sm:flex-none"
+                      >
+                        🚀{' '}
+                        {lang === 'ka'
+                          ? 'გახსენი ხელსაწყოები'
+                          : 'Open Workspace'}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedPreviewMarathon(null);
+                          onStartRegister();
+                        }}
+                        className="flex-1 cursor-pointer whitespace-nowrap rounded-xl bg-[#7C4DFF] px-5 py-2.5 text-xs font-black text-white shadow-md transition-all hover:bg-[#6c3df0] sm:flex-none"
+                      >
+                        👑{' '}
+                        {lang === 'ka'
+                          ? 'რეგისტრაცია და მონაწილეობა'
+                          : 'Register to Start'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+      {selectedPreviewChallenge &&
+        (() => {
+          const challenge = selectedPreviewChallenge;
+
+          const difficultyClass =
+            challenge.difficulty === 'easy'
+              ? 'border-emerald-200 bg-emerald-100 text-emerald-800'
+              : challenge.difficulty === 'medium'
+                ? 'border-amber-200 bg-amber-100 text-amber-800'
+                : 'border-purple-200 bg-purple-100 text-purple-800';
+
+          const difficultyLabel =
+            lang === 'ka'
+              ? challenge.difficulty === 'easy'
+                ? 'ადვილი'
+                : challenge.difficulty === 'medium'
+                  ? 'საშუალო'
+                  : 'რთული'
+              : challenge.difficulty || 'medium';
+
+          return (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4 backdrop-blur-lg antialiased">
+              <div className="relative max-h-[90vh] w-full max-w-xl space-y-5 overflow-y-auto rounded-3xl border border-violet-100 bg-white p-6 text-left shadow-2xl sm:p-7">
+                <button
+                  type="button"
+                  onClick={() => setSelectedPreviewChallenge(null)}
+                  className="absolute right-4 top-4 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-slate-100 font-bold text-slate-400 hover:text-black"
+                >
+                  ✕
+                </button>
+
+                <div className="space-y-1.5 pr-8">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`rounded-md border px-2 py-0.5 text-[9px] font-black uppercase tracking-wider ${difficultyClass}`}
+                    >
+                      {difficultyLabel}
+                    </span>
+
+                    <span className="rounded-md border border-amber-100 bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-900">
+                      🪙{' '}
+                      {challenge.completionReward || challenge.points || 20}
+                    </span>
+                  </div>
+
+                  <h3 className="font-extrabold leading-snug text-[#1E1B35]">
+                    {lang === 'ka'
+                      ? challenge.title_ka || challenge.title
+                      : challenge.title_en || challenge.title}
+                  </h3>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2 rounded-xl border border-violet-50 bg-slate-50 p-4 text-xs leading-relaxed text-slate-700">
+                    <strong className="mb-1 block font-black text-[#7C4DFF]">
+                      {lang === 'ka'
+                        ? '📋 გამოწვევის შინაარსი'
+                        : '📋 Challenge Info'}
+                    </strong>
+
+                    <p className="whitespace-pre-wrap font-medium">
+                      {lang === 'ka'
+                        ? challenge.description_ka ||
+                          challenge.description ||
+                          ''
+                        : challenge.description_en ||
+                          challenge.description ||
+                          ''}
+                    </p>
+
+                    {challenge.fullInstructions && (
+                      <p className="mt-2 whitespace-pre-wrap border-l-2 border-violet-200 pl-3 text-slate-500">
+                        {lang === 'ka'
+                          ? challenge.fullInstructions
+                          : challenge.fullInstructions_en ||
+                            challenge.fullInstructions}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 rounded-xl border border-violet-50 bg-slate-50 p-4 text-xs leading-relaxed text-slate-700">
+                    <strong className="mb-1 block font-black text-[#FF9B6A]">
+                      {lang === 'ka'
+                        ? '⚖️ ქულების დარიცხვა'
+                        : '⚖️ Scoring Framework'}
+                    </strong>
+
+                    <div className="whitespace-pre-wrap font-medium text-slate-600">
+                      {lang === 'ka'
+                        ? challenge.fullDescription ||
+                          challenge.fullDescription_ka ||
+                          `სათამაშო ქულების დადგენილი წესები:\n\n1. გამოწვევის საბაზისო ქულა: +${challenge.points || 20} ქულა შესრულებისთვის.\n2. დედლაინამდე შესრულების ბონუსი: +10 ქულა.\n3. სიმამაცის ქულა: +15 ქულა საჯაროობისთვის.`
+                        : challenge.fullDescription_en ||
+                          challenge.fullDescription ||
+                          `Scoring details:\n1. Base reward: +${challenge.points || 20} pts.\n2. Deadline bonus: +10 pts.\n3. Public visibility: +15 pts.`}
+                    </div>
+
+                    <div className="mt-2 whitespace-pre-wrap rounded-lg border-l-2 border-amber-300 bg-amber-50/40 p-2.5 text-[11px] italic text-amber-800">
+                      <strong>
+                        💡 {lang === 'ka' ? 'უსაფრთხოება:' : 'Safety rules:'}{' '}
+                      </strong>
+                      {lang === 'ka'
+                        ? challenge.safetyRules ||
+                          challenge.safetyRules_ka ||
+                          'გამოწვევა უნდა შესრულდეს სრულიად უსაფრთხო გარემოში.'
+                        : challenge.safetyRules_en ||
+                          challenge.safetyRules ||
+                          'The challenge must be performed in a safe environment.'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPreviewChallenge(null)}
+                    className="flex-1 cursor-pointer rounded-xl bg-slate-100 py-2.5 text-center text-xs font-black text-slate-700 hover:bg-slate-200"
+                  >
+                    {lang === 'ka' ? 'უკან დაბრუნება' : 'Go Back'}
+                  </button>
+
                   {currentUser ? (
                     <button
                       type="button"
                       onClick={() => {
-                        const mId = m.id;
-                        if (setSelectedMarathonId) setSelectedMarathonId(mId);
+                        setSelectedPreviewChallenge(null);
                         setSelectedPreviewMarathon(null);
-                        setCurrentTab("cabinet");
-                        if (setActiveCabinetTab) setActiveCabinetTab("challenges");
+                        openChallengeWorkspace(challenge.marathonId);
                       }}
-                      className="flex-1 sm:flex-none px-5 py-2.5 bg-[#7C4DFF] hover:bg-[#6c3df0] text-white text-xs font-black rounded-xl shadow-md transition-all cursor-pointer whitespace-nowrap"
+                      className="flex-1 cursor-pointer rounded-xl bg-[#7C4DFF] py-2.5 text-center text-xs font-black text-white shadow-md shadow-[#7C4DFF]/25 hover:bg-[#6c3df0]"
                     >
-                      🚀 {lang === "ka" ? "გახსენი ხელსაწყოები" : "Open Workspace"}
+                      🚀 {lang === 'ka' ? 'დაიწყე შესრულება' : 'Start Challenge'}
                     </button>
                   ) : (
                     <button
                       type="button"
                       onClick={() => {
+                        setSelectedPreviewChallenge(null);
                         setSelectedPreviewMarathon(null);
                         onStartRegister();
                       }}
-                      className="flex-1 sm:flex-none px-5 py-2.5 bg-[#7C4DFF] hover:bg-[#6c3df0] text-white text-xs font-black rounded-xl shadow-md transition-all cursor-pointer whitespace-nowrap"
+                      className="flex-1 cursor-pointer rounded-xl bg-[#7C4DFF] py-2.5 text-center text-xs font-black text-white shadow-md shadow-[#7C4DFF]/25 hover:bg-[#6c3df0]"
                     >
-                      👑 {lang === "ka" ? "რეგისტრაცია და მონაწილეობა" : "Register to Start"}
+                      👑 {lang === 'ka' ? 'შესრულება' : 'Participate'}
                     </button>
                   )}
                 </div>
               </div>
             </div>
-          </div>
-        );
-      })()}
-
-      {/* 🌟 ცალკეული გამოწვევის დეტალური გადახედვის მოდალი */}
-      {selectedPreviewChallenge && (() => {
-        const c = selectedPreviewChallenge;
-        const diffColors = c.difficulty === "easy" 
-          ? "bg-emerald-100 text-emerald-800 border-emerald-200" 
-          : c.difficulty === "medium" 
-            ? "bg-amber-100 text-amber-800 border-amber-200" 
-            : "bg-purple-100 text-purple-800 border-purple-200";
-
-        return (
-          <div className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-lg flex items-center justify-center p-4 antialiased">
-            <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-xl w-full border border-violet-100 shadow-2xl text-left space-y-5 max-h-[90vh] overflow-y-auto relative">
-              
-              <button 
-                type="button" 
-                onClick={() => setSelectedPreviewChallenge(null)} 
-                className="absolute top-4 right-4 text-slate-400 font-bold hover:text-black cursor-pointer w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center"
-              >
-                ✕
-              </button>
-
-              <div className="space-y-1.5 pr-8">
-                <div className="flex gap-1.5 items-center">
-                  <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${diffColors}`}>
-                    {lang === "ka" 
-                      ? (c.difficulty === "easy" ? "ადვილი" : c.difficulty === "medium" ? "საშუალო" : "რთული") 
-                      : c.difficulty}
-                  </span>
-                  <span className="text-[10px] font-black bg-amber-55 text-amber-900 border border-amber-100 px-2 py-0.5 rounded-md">
-                    🪙 {c.completionReward || c.points || 20}
-                  </span>
-                </div>
-                <h3 className="font-extrabold text-[#1E1B35] leading-snug">
-                  {lang === "ka" ? (c.title_ka || c.title) : (c.title_en || c.title)}
-                </h3>
-              </div>
-
-              <div className="space-y-4">
-                {/* Description */}
-                <div className="p-4 bg-slate-50 rounded-xl text-xs space-y-2 leading-relaxed text-slate-700 border border-violet-50">
-                  <strong className="text-[#7C4DFF] font-black block mb-1">
-                    {lang === "ka" ? "📋 გამოწვევის შინაარსი" : "📋 Challenge Info"}
-                  </strong>
-                  <p className="whitespace-pre-wrap font-medium">
-                    {lang === "ka" 
-                      ? (c.description_ka || c.description || "") 
-                      : (c.description_en || c.description || "")}
-                  </p>
-                  {c.fullInstructions && (
-                    <p className="whitespace-pre-wrap mt-2 pl-3 border-l-2 border-violet-200 text-slate-500">
-                      {lang === "ka" ? c.fullInstructions : (c.fullInstructions_en || c.fullInstructions)}
-                    </p>
-                  )}
-                </div>
-
-                {/* Rules & Scoring */}
-                <div className="p-4 bg-slate-50 rounded-xl text-xs space-y-2 leading-relaxed text-slate-700 border border-violet-50">
-                  <strong className="text-[#FF9B6A] font-black block mb-1">
-                    {lang === "ka" ? "⚖️ ქულების დარიცხვა" : "⚖️ Scoring Framework"}
-                  </strong>
-                  <div className="whitespace-pre-wrap font-medium text-slate-600">
-                    {lang === "ka" 
-                      ? (c.fullDescription || c.fullDescription_ka || `სათამაშო ქულების დადგენილი წესები:\n\n1. გამოწვევის საბაზისო ქულა: +${c.points || 20} ქულა შესრულებისთვის.\n2. დედლაინამდე შესრულების ბონუსი: +10 ქულა (3 დღე).\n3. სიმამაცის ქულა: +15 ქულა (საჯაროობა).\n\n🏆 გამარჯვებული გამოვლინდება ყოველი თვის 30 რიცხვში.`) 
-                      : (c.fullDescription_en || c.fullDescription || `Scoring details:\n1. Base Reward: +${c.points || 20} pts.\n2. Quick Sub: +10 pts bonus.\n3. Public visibility: +15 pts bravery bonus.`)}
-                  </div>
-                  <div className="whitespace-pre-wrap mt-2 pl-3 border-l-2 border-amber-300 italic text-amber-800 bg-amber-50/40 p-2.5 rounded-lg text-[11px]">
-                    <strong>💡 {lang === "ka" ? "უსაფრთხოება:" : "Safety rules:"} </strong>
-                    {lang === "ka" 
-                      ? (c.safetyRules || c.safetyRules_ka || "გამოწვევა უნდა შესრულდეს სრულიად უსაფრთხო გარემოში.") 
-                      : (c.safetyRules_en || c.safetyRules || "The challenge must be performed in an absolutely safe environment.")}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedPreviewChallenge(null)}
-                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black rounded-xl cursor-pointer text-center"
-                >
-                  {lang === "ka" ? "უკან დაბრუნება" : "Go Back"}
-                </button>
-                {currentUser ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (setSelectedMarathonId) {
-                        setSelectedMarathonId(c.marathonId);
-                      }
-                      setSelectedPreviewChallenge(null);
-                      setSelectedPreviewMarathon(null);
-                      setCurrentTab("cabinet");
-                      if (setActiveCabinetTab) setActiveCabinetTab("challenges");
-                    }}
-                    className="flex-1 py-2.5 bg-[#7C4DFF] hover:bg-[#6c3df0] text-white text-xs font-black rounded-xl cursor-pointer text-center shadow-md shadow-[#7C4DFF]/25"
-                  >
-                    🚀 {lang === "ka" ? "დაიწყე შესრულება" : "Start Challenge"}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedPreviewChallenge(null);
-                      setSelectedPreviewMarathon(null);
-                      onStartRegister();
-                    }}
-                    className="flex-1 py-2.5 bg-[#7C4DFF] hover:bg-[#6c3df0] text-white text-xs font-black rounded-xl cursor-pointer text-center shadow-md shadow-[#7C4DFF]/25"
-                  >
-                    👑 {lang === "ka" ? "შესრულება" : "Participate"}
-                  </button>
-                )}
-              </div>
-
-            </div>
-          </div>
-        );
-      })()}
-
+          );
+        })()}
     </div>
   );
 }
