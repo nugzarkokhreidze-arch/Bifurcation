@@ -280,13 +280,9 @@ export default function VideoFeed({
     }
   }
 
-  useEffect(() => {
-    loadPublicSubmissions();
-
-    const interval = window.setInterval(loadPublicSubmissions, 3000);
-
-    return () => window.clearInterval(interval);
-  }, [currentUser?.id]);
+useEffect(() => {
+  loadPublicSubmissions();
+}, [currentUser?.id]);
 
   async function handleLike(submission: any) {
     try {
