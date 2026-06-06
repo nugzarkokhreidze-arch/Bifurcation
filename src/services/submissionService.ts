@@ -1,6 +1,7 @@
 import type { Submission, User } from '../types';
 import { POINTS_CONFIG } from './pointsService';
 import { storageKeys, storageService } from './storageService';
+import { supabase } from './supabaseClient';
 
 const EXTRA_SUBMISSIONS_KEY = 'bifurcation_submissions';
 const LEGACY_SUBMISSIONS_KEY = 'submissions';
@@ -14,6 +15,8 @@ const MAX_VOTE_BONUS_PER_SUBMISSION =
 const MAX_COMMENT_BONUS_PER_SUBMISSION =
   (POINTS_CONFIG as any).maxCommentBonusPerSubmission ?? 45;
 
+let hasAttemptedInitialCloudSync = false;
+
 type StoredComment = {
   id: string;
   submissionId: string;
@@ -23,6 +26,15 @@ type StoredComment = {
   text: string;
   createdAt: string;
 };
+
+function isUuid(value?: string) {
+  return Boolean(
+    value &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        value
+      )
+  );
+}
 
 function getSubmissionStorageKeys() {
   return Array.from(
@@ -65,8 +77,28 @@ function getSubmissionKey(item: any) {
   );
 }
 
-function normalizeArray(value: any) {
-  return Array.isArray(value) ? value : [];
+function normalizeArray(value: any): any[] {
+  if (Array.isArray(value)) return value;
+
+  if (!value) return [];
+
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+function normalizeBoolean(value: any, fallback = true) {
+  if (typeof value === 'boolean') return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return fallback;
 }
 
 function mergeSubmissions(...lists: any[][]) {
@@ -81,7 +113,9 @@ function mergeSubmissions(...lists: any[][]) {
     const likedBy = Array.from(
       new Set([
         ...normalizeArray(previous.likedBy),
+        ...normalizeArray(previous.liked_by),
         ...normalizeArray(previous.votedUserIds),
+        ...normalizeArray(previous.voted_user_ids),
         ...normalizeArray(item.likedBy),
         ...normalizeArray(item.liked_by),
         ...normalizeArray(item.votedUserIds),
@@ -98,40 +132,18 @@ function mergeSubmissions(...lists: any[][]) {
       ])
     );
 
-    const votePointsGivenBy = Array.from(
-      new Set([
-        ...normalizeArray(previous.votePointsGivenBy),
-        ...normalizeArray(previous.vote_points_given_by),
-        ...normalizeArray(item.votePointsGivenBy),
-        ...normalizeArray(item.vote_points_given_by),
-      ])
-    );
-
-    const viewPointsGivenBy = Array.from(
-      new Set([
-        ...normalizeArray(previous.viewPointsGivenBy),
-        ...normalizeArray(previous.view_points_given_by),
-        ...normalizeArray(item.viewPointsGivenBy),
-        ...normalizeArray(item.view_points_given_by),
-      ])
-    );
-
-    const commentPointsGivenBy = Array.from(
-      new Set([
-        ...normalizeArray(previous.commentPointsGivenBy),
-        ...normalizeArray(previous.comment_points_given_by),
-        ...normalizeArray(item.commentPointsGivenBy),
-        ...normalizeArray(item.comment_points_given_by),
-      ])
-    );
-
     const comments = [
       ...normalizeArray(previous.comments),
       ...normalizeArray(item.comments),
     ];
 
     const uniqueComments = Array.from(
-      new Map(comments.map((comment: any) => [comment.id || comment.createdAt, comment])).values()
+      new Map(
+        comments.map((comment: any) => [
+          comment.id || `${comment.authorId || comment.author_id}-${comment.createdAt || comment.created_at}`,
+          comment,
+        ])
+      ).values()
     );
 
     const siteViews =
@@ -178,7 +190,8 @@ function mergeSubmissions(...lists: any[][]) {
 
       challengeId:
         item.challengeId || item.challenge_id || previous.challengeId || '',
-      marathonId: item.marathonId || item.marathon_id || previous.marathonId || '',
+      marathonId:
+        item.marathonId || item.marathon_id || previous.marathonId || '',
 
       submissionType:
         item.submissionType ||
@@ -222,25 +235,24 @@ function mergeSubmissions(...lists: any[][]) {
         previous.externalUrl ||
         '',
 
+      fileUrl: item.fileUrl || item.file_url || previous.fileUrl || '',
+      videoUrl: item.videoUrl || item.video_url || previous.videoUrl || '',
+      localPreviewUrl:
+        item.localPreviewUrl || item.local_preview_url || previous.localPreviewUrl || '',
+
       visibility: item.visibility || previous.visibility || 'public',
-      publishToWall:
-        item.publishToWall ??
-        item.publish_to_wall ??
-        previous.publishToWall ??
-        previous.publish_to_wall ??
-        true,
-      publish_to_wall:
-        item.publish_to_wall ??
-        item.publishToWall ??
-        previous.publish_to_wall ??
-        previous.publishToWall ??
-        true,
-      isPublic:
-        item.isPublic ??
-        item.is_public ??
-        previous.isPublic ??
-        previous.is_public ??
-        true,
+      publishToWall: normalizeBoolean(
+        item.publishToWall ?? item.publish_to_wall ?? previous.publishToWall,
+        true
+      ),
+      publish_to_wall: normalizeBoolean(
+        item.publish_to_wall ?? item.publishToWall ?? previous.publish_to_wall,
+        true
+      ),
+      isPublic: normalizeBoolean(
+        item.isPublic ?? item.is_public ?? previous.isPublic,
+        true
+      ),
 
       approved:
         item.approved ??
@@ -255,9 +267,6 @@ function mergeSubmissions(...lists: any[][]) {
       votedUserIds: likedBy,
       viewedBy,
       comments: uniqueComments,
-      votePointsGivenBy,
-      viewPointsGivenBy,
-      commentPointsGivenBy,
 
       votes: item.votes ?? item.likes ?? likedBy.length ?? previous.votes ?? 0,
       likes: item.likes ?? item.votes ?? likedBy.length ?? previous.likes ?? 0,
@@ -267,7 +276,27 @@ function mergeSubmissions(...lists: any[][]) {
       siteComments,
 
       engagementPoints:
-        item.engagementPoints ?? previous.engagementPoints ?? 0,
+        item.engagementPoints ?? item.engagement_points ?? previous.engagementPoints ?? 0,
+
+      comment:
+        item.comment ?? item.reflectionText ?? item.reflection_text ?? previous.comment ?? '',
+      reflectionText:
+        item.reflectionText ?? item.reflection_text ?? item.comment ?? previous.reflectionText ?? '',
+      textDescription:
+        item.textDescription ??
+        item.text_description ??
+        item.reflectionText ??
+        item.reflection_text ??
+        item.comment ??
+        previous.textDescription ??
+        '',
+
+      playerNickname:
+        item.playerNickname || item.player_nickname || previous.playerNickname || 'მოთამაშე',
+      playerAvatar:
+        item.playerAvatar || item.player_avatar || previous.playerAvatar || '',
+      challengeTitle:
+        item.challengeTitle || item.challenge_title || previous.challengeTitle || 'გამოწვევა',
 
       createdAt:
         item.createdAt ||
@@ -325,7 +354,164 @@ function saveAllLocalSubmissions(items: any[]) {
   }
 }
 
-function updateUserPoints(playerId: string, amount: number, marathonId?: string) {
+function mapRowToSubmission(row: any) {
+  return mergeSubmissions([
+    {
+      id: row.id,
+      playerId: row.player_id || '',
+      userId: row.player_id || '',
+      challengeId: row.challenge_id || '',
+      marathonId: row.marathon_id || '',
+      visibility: row.visibility || 'public',
+      publishToWall: row.publish_to_wall ?? true,
+      publish_to_wall: row.publish_to_wall ?? true,
+      submissionType: row.submission_type || 'tiktok',
+      socialPlatform: row.social_platform || 'tiktok',
+      fileUrl: row.file_url || '',
+      videoUrl: row.video_url || '',
+      tiktokUrl: row.tiktok_url || row.social_url || row.external_url || row.video_url || '',
+      socialUrl: row.social_url || row.tiktok_url || row.external_url || row.video_url || '',
+      externalUrl: row.external_url || row.tiktok_url || row.social_url || row.video_url || '',
+      comment: row.comment || '',
+      reflectionText: row.reflection_text || row.comment || '',
+      likedBy: normalizeArray(row.liked_by),
+      viewedBy: normalizeArray(row.viewed_by),
+      comments: normalizeArray(row.comments),
+      siteViews: Number(row.site_views || 0),
+      siteLikes: Number(row.site_likes || 0),
+      siteComments: Number(row.site_comments || 0),
+      createdAt: row.created_at || new Date().toISOString(),
+      updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
+    },
+  ])[0];
+}
+
+function mapSubmissionToRow(submission: any) {
+  const url =
+    submission.tiktokUrl ||
+    submission.socialUrl ||
+    submission.externalUrl ||
+    submission.videoUrl ||
+    submission.fileUrl ||
+    '';
+
+  return {
+    id: submission.id,
+    player_id: isUuid(submission.playerId || submission.userId)
+      ? submission.playerId || submission.userId
+      : null,
+    challenge_id: submission.challengeId || '',
+    marathon_id: submission.marathonId || '',
+    visibility: submission.visibility || 'public',
+    publish_to_wall:
+      submission.publishToWall ?? submission.publish_to_wall ?? submission.visibility !== 'hidden',
+    submission_type: submission.submissionType || (url.includes('tiktok') ? 'tiktok' : 'text'),
+    file_url: submission.fileUrl || '',
+    video_url: submission.videoUrl || '',
+    tiktok_url: submission.tiktokUrl || (url.includes('tiktok') ? url : ''),
+    social_url: submission.socialUrl || url,
+    external_url: submission.externalUrl || url,
+    social_platform: submission.socialPlatform || (url.includes('tiktok') ? 'tiktok' : ''),
+    comment: submission.comment || submission.reflectionText || '',
+    reflection_text: submission.reflectionText || submission.comment || '',
+    liked_by: submission.likedBy || submission.votedUserIds || [],
+    viewed_by: submission.viewedBy || [],
+    comments: submission.comments || [],
+    site_views: Number(submission.siteViews || submission.site_views || 0),
+    site_likes: Number(
+      submission.siteLikes || submission.site_likes || submission.likes || submission.votes || 0
+    ),
+    site_comments: Number(
+      submission.siteComments || submission.site_comments || (submission.comments || []).length || 0
+    ),
+    created_at: submission.createdAt || submission.created_at || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+async function fetchCloudSubmissions() {
+  try {
+    const { data, error } = await supabase
+      .from('submissions')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(300);
+
+    if (error) throw error;
+
+    return (data || []).map(mapRowToSubmission);
+  } catch (error) {
+    console.warn('Supabase submissions load failed. Using local fallback:', error);
+    return [];
+  }
+}
+
+async function upsertCloudSubmission(submission: any) {
+  try {
+    const row = mapSubmissionToRow(submission);
+
+    const { data, error } = await supabase
+      .from('submissions')
+      .upsert(row, { onConflict: 'id' })
+      .select()
+      .maybeSingle();
+
+    if (error) throw error;
+
+    return data ? mapRowToSubmission(data) : submission;
+  } catch (error) {
+    console.warn('Supabase submission save failed. Local copy is kept:', error);
+    return submission;
+  }
+}
+
+async function updateCloudSubmission(submission: any) {
+  try {
+    const row = mapSubmissionToRow(submission);
+
+    const { data, error } = await supabase
+      .from('submissions')
+      .update(row)
+      .eq('id', submission.id)
+      .select()
+      .maybeSingle();
+
+    if (error) throw error;
+
+    return data ? mapRowToSubmission(data) : submission;
+  } catch (error) {
+    console.warn('Supabase submission update failed. Local copy is kept:', error);
+    return submission;
+  }
+}
+
+async function updateCloudPlayerPoints(playerId: string, amount: number) {
+  if (!isUuid(playerId) || !amount) return;
+
+  try {
+    const { data, error } = await supabase
+      .from('players')
+      .select('points')
+      .eq('id', playerId)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    const currentPoints = Number(data?.points ?? 0);
+    const nextPoints = Math.max(0, currentPoints + amount);
+
+    const { error: updateError } = await supabase
+      .from('players')
+      .update({ points: nextPoints, updated_at: new Date().toISOString() })
+      .eq('id', playerId);
+
+    if (updateError) throw updateError;
+  } catch (error) {
+    console.warn('Supabase player points update failed. Local points remain:', error);
+  }
+}
+
+function updateLocalUserPoints(playerId: string, amount: number, marathonId?: string) {
   if (!playerId || !amount) return;
 
   const currentUser = storageService.loadData<User | null>(
@@ -340,26 +526,17 @@ function updateUserPoints(playerId: string, amount: number, marathonId?: string)
     });
   }
 
-  const userKeys = Array.from(
-    new Set(
-      [storageKeys.users, (storageKeys as any).players].filter(
-        (key): key is string => Boolean(key)
-      )
-    )
-  );
+  const users = storageService.loadData<User[]>(storageKeys.users, []);
 
-  for (const key of userKeys) {
-    const users = storageService.loadData<User[]>(key, []);
-
-    if (!users.length) continue;
-
+  if (users.length) {
     storageService.saveData(
-      key,
+      storageKeys.users,
       users.map(user =>
         user.id === playerId
           ? {
               ...user,
               points: Math.max(0, (user.points || 0) + amount),
+              updatedAt: new Date().toISOString(),
             }
           : user
       )
@@ -375,8 +552,8 @@ function updateUserPoints(playerId: string, amount: number, marathonId?: string)
     storageService.saveData(
       storageKeys.monthlyPlayerRecords,
       records.map(record => {
-        const samePlayer = record.playerId === playerId;
-        const sameMarathon = !marathonId || record.marathonId === marathonId;
+        const samePlayer = record.playerId === playerId || record.player_id === playerId;
+        const sameMarathon = !marathonId || record.marathonId === marathonId || record.marathon_id === marathonId;
 
         if (!samePlayer || !sameMarathon) return record;
 
@@ -388,6 +565,11 @@ function updateUserPoints(playerId: string, amount: number, marathonId?: string)
       })
     );
   }
+}
+
+async function updateUserPoints(playerId: string, amount: number, marathonId?: string) {
+  updateLocalUserPoints(playerId, amount, marathonId);
+  await updateCloudPlayerPoints(playerId, amount);
 }
 
 async function fileToDataUrl(file?: File | null) {
@@ -411,9 +593,54 @@ function canAwardWithinLimit(
   return alreadyAwardedCount * bonusPerAction < maxBonus;
 }
 
+function getGuestIdFallback(prefix: string) {
+  if (typeof window === 'undefined') return `${prefix}-server`;
+
+  const key = `bifurcation_${prefix}_id`;
+  const existing = window.localStorage.getItem(key);
+
+  if (existing) return existing;
+
+  const created = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  window.localStorage.setItem(key, created);
+  return created;
+}
+
 export const submissionService = {
   async getSubmissions(): Promise<Submission[]> {
-    return loadAllLocalSubmissions() as Submission[];
+    const localSubmissions = loadAllLocalSubmissions();
+
+    // პირველად ჩატვირთვისას ვცდილობთ ძველი localStorage ჩანაწერების cloud-ში ატვირთვას.
+    // ასე კომპიუტერში შექმნილი ჩანაწერები გამოჩნდება მობილურშიც, თუ მოთამაშე უკვე cloud ანგარიშით მუშაობს.
+    if (!hasAttemptedInitialCloudSync && localSubmissions.length > 0) {
+      hasAttemptedInitialCloudSync = true;
+
+      for (const submission of localSubmissions.slice(0, 100)) {
+        await upsertCloudSubmission(submission);
+      }
+    }
+
+    const cloudSubmissions = await fetchCloudSubmissions();
+    const merged = mergeSubmissions(cloudSubmissions, localSubmissions);
+
+    saveAllLocalSubmissions(merged);
+
+    return merged as Submission[];
+  },
+
+  async syncLocalToCloud(): Promise<Submission[]> {
+    const localSubmissions = loadAllLocalSubmissions();
+    const synced: any[] = [];
+
+    for (const submission of localSubmissions) {
+      synced.push(await upsertCloudSubmission(submission));
+    }
+
+    const cloudSubmissions = await fetchCloudSubmissions();
+    const merged = mergeSubmissions(cloudSubmissions, synced, localSubmissions);
+    saveAllLocalSubmissions(merged);
+
+    return merged as Submission[];
   },
 
   async createSubmission(params: {
@@ -481,9 +708,6 @@ export const submissionService = {
       likedBy: [],
       votedUserIds: [],
       comments: [],
-      votePointsGivenBy: [],
-      viewPointsGivenBy: [],
-      commentPointsGivenBy: [],
 
       votes: 0,
       likes: 0,
@@ -496,54 +720,55 @@ export const submissionService = {
       updatedAt: now,
     };
 
-    const existing = loadAllLocalSubmissions();
-    const next = mergeSubmissions([submission], existing);
+    const localNext = mergeSubmissions([submission], loadAllLocalSubmissions());
+    saveAllLocalSubmissions(localNext);
 
-    saveAllLocalSubmissions(next);
+    const cloudSubmission = await upsertCloudSubmission(submission);
+    const merged = mergeSubmissions([cloudSubmission], localNext);
+    saveAllLocalSubmissions(merged);
 
-    return submission as Submission;
+    return cloudSubmission as Submission;
   },
 
-  async recordView(submissionId: string, viewerId: string): Promise<Submission | null> {
-    if (!submissionId || !viewerId) return null;
+  async recordView(submissionId: string, viewerId?: string): Promise<Submission | null> {
+    const safeViewerId = viewerId || getGuestIdFallback('viewer');
 
-    const submissions = loadAllLocalSubmissions();
+    if (!submissionId || !safeViewerId) return null;
+
+    const submissions = await this.getSubmissions();
     let updatedSubmission: any = null;
     let pointsToAward = 0;
 
-    const updated = submissions.map(submission => {
-      if (submission.id !== submissionId) return submission;
+    const updated = (submissions as any[]).map(submission => {
+      const matches =
+        submission.id === submissionId ||
+        submission.remoteId === submissionId ||
+        submission.remote_id === submissionId;
+
+      if (!matches) return submission;
 
       const viewedBy = Array.from(
-        new Set([...(submission.viewedBy || []), viewerId])
+        new Set([...(submission.viewedBy || []), safeViewerId])
       );
 
-      const viewPointsGivenBy = Array.from(
-        new Set([...(submission.viewPointsGivenBy || [])])
-      );
-
+      const isNewViewer = !(submission.viewedBy || []).includes(safeViewerId);
       const isOwnView =
-        submission.playerId === viewerId || submission.userId === viewerId;
+        submission.playerId === safeViewerId || submission.userId === safeViewerId;
 
       const canAward =
+        isNewViewer &&
         !isOwnView &&
-        !viewPointsGivenBy.includes(viewerId) &&
         canAwardWithinLimit(
-          viewPointsGivenBy.length,
+          Math.max(0, viewedBy.length - 1),
           SITE_VIEW_BONUS,
           MAX_VIEW_BONUS_PER_SUBMISSION
         );
-
-      const nextViewPointsGivenBy = canAward
-        ? [...viewPointsGivenBy, viewerId]
-        : viewPointsGivenBy;
 
       pointsToAward = canAward ? SITE_VIEW_BONUS : 0;
 
       updatedSubmission = {
         ...submission,
         viewedBy,
-        viewPointsGivenBy: nextViewPointsGivenBy,
         siteViews: viewedBy.length,
         engagementPoints: (submission.engagementPoints || 0) + pointsToAward,
         updatedAt: new Date().toISOString(),
@@ -555,16 +780,18 @@ export const submissionService = {
     if (!updatedSubmission) return null;
 
     saveAllLocalSubmissions(updated);
+    const cloudSubmission = await updateCloudSubmission(updatedSubmission);
+    saveAllLocalSubmissions(mergeSubmissions([cloudSubmission], updated));
 
     if (pointsToAward > 0) {
-      updateUserPoints(
+      await updateUserPoints(
         updatedSubmission.playerId || updatedSubmission.userId,
         pointsToAward,
         updatedSubmission.marathonId
       );
     }
 
-    return updatedSubmission as Submission;
+    return cloudSubmission as Submission;
   },
 
   async voteSubmission(submissionId: string, voterId: string): Promise<Submission | null> {
@@ -572,13 +799,13 @@ export const submissionService = {
       throw new Error('Missing submission or voter id.');
     }
 
-    const submissions = loadAllLocalSubmissions();
+    const submissions = await this.getSubmissions();
 
     let updatedSubmission: any = null;
     let authorPoints = 0;
     let voterPoints = 0;
 
-    const updated = submissions.map(submission => {
+    const updated = (submissions as any[]).map(submission => {
       const matches =
         submission.id === submissionId ||
         submission.remoteId === submissionId ||
@@ -601,22 +828,13 @@ export const submissionService = {
         throw new Error('ამ აქტივობაზე მხარდაჭერა უკვე დაფიქსირებულია.');
       }
 
-      const votePointsGivenBy = Array.from(
-        new Set([...(submission.votePointsGivenBy || [])])
+      const canAwardAuthor = canAwardWithinLimit(
+        likedBy.length,
+        POINTS_CONFIG.voteReceivedBonus,
+        MAX_VOTE_BONUS_PER_SUBMISSION
       );
 
-      const canAwardAuthor =
-        !votePointsGivenBy.includes(voterId) &&
-        canAwardWithinLimit(
-          votePointsGivenBy.length,
-          POINTS_CONFIG.voteReceivedBonus,
-          MAX_VOTE_BONUS_PER_SUBMISSION
-        );
-
       const nextLikedBy = [...likedBy, voterId];
-      const nextVotePointsGivenBy = canAwardAuthor
-        ? [...votePointsGivenBy, voterId]
-        : votePointsGivenBy;
 
       authorPoints = canAwardAuthor ? POINTS_CONFIG.voteReceivedBonus : 0;
       voterPoints = POINTS_CONFIG.voterSupportBonus;
@@ -625,7 +843,6 @@ export const submissionService = {
         ...submission,
         likedBy: nextLikedBy,
         votedUserIds: nextLikedBy,
-        votePointsGivenBy: nextVotePointsGivenBy,
         votes: nextLikedBy.length,
         likes: nextLikedBy.length,
         siteLikes: nextLikedBy.length,
@@ -641,20 +858,24 @@ export const submissionService = {
     }
 
     saveAllLocalSubmissions(updated);
+    const cloudSubmission = await updateCloudSubmission(updatedSubmission);
+    saveAllLocalSubmissions(mergeSubmissions([cloudSubmission], updated));
 
     if (authorPoints > 0) {
-      updateUserPoints(
+      await updateUserPoints(
         updatedSubmission.playerId || updatedSubmission.userId,
         authorPoints,
         updatedSubmission.marathonId
       );
     }
 
-    if (voterPoints > 0) {
-      updateUserPoints(voterId, voterPoints);
+    if (voterPoints > 0 && isUuid(voterId)) {
+      await updateUserPoints(voterId, voterPoints);
+    } else if (voterPoints > 0) {
+      updateLocalUserPoints(voterId, voterPoints);
     }
 
-    return updatedSubmission as Submission;
+    return cloudSubmission as Submission;
   },
 
   async addComment(
@@ -680,21 +901,23 @@ export const submissionService = {
       throw new Error('კომენტარი ძალიან გრძელია. მაქსიმუმ 500 სიმბოლო.');
     }
 
-    const submissions = loadAllLocalSubmissions();
+    const submissions = await this.getSubmissions();
     let updatedSubmission: any = null;
     let pointsToAward = 0;
 
-    const updated = submissions.map(submission => {
-      if (submission.id !== submissionId) return submission;
+    const updated = (submissions as any[]).map(submission => {
+      const matches =
+        submission.id === submissionId ||
+        submission.remoteId === submissionId ||
+        submission.remote_id === submissionId;
+
+      if (!matches) return submission;
 
       const comments = normalizeArray(submission.comments);
-      const commentPointsGivenBy = Array.from(
-        new Set([...(submission.commentPointsGivenBy || [])])
-      );
 
       const newComment: StoredComment = {
         id: makeLocalCommentId(),
-        submissionId,
+        submissionId: submission.id,
         authorId: params.authorId,
         authorNickname: params.authorNickname || 'სტუმარი',
         authorAvatar: params.authorAvatar || '',
@@ -706,18 +929,22 @@ export const submissionService = {
         submission.playerId === params.authorId ||
         submission.userId === params.authorId;
 
+      const alreadyAwardedAuthorIds = Array.from(
+        new Set(
+          comments
+            .map((comment: any) => comment.authorId || comment.author_id)
+            .filter(Boolean)
+        )
+      );
+
       const canAward =
         !isOwnComment &&
-        !commentPointsGivenBy.includes(params.authorId) &&
+        !alreadyAwardedAuthorIds.includes(params.authorId) &&
         canAwardWithinLimit(
-          commentPointsGivenBy.length,
+          alreadyAwardedAuthorIds.length,
           SITE_COMMENT_BONUS,
           MAX_COMMENT_BONUS_PER_SUBMISSION
         );
-
-      const nextCommentPointsGivenBy = canAward
-        ? [...commentPointsGivenBy, params.authorId]
-        : commentPointsGivenBy;
 
       pointsToAward = canAward ? SITE_COMMENT_BONUS : 0;
 
@@ -726,7 +953,6 @@ export const submissionService = {
       updatedSubmission = {
         ...submission,
         comments: nextComments,
-        commentPointsGivenBy: nextCommentPointsGivenBy,
         siteComments: nextComments.length,
         engagementPoints: (submission.engagementPoints || 0) + pointsToAward,
         updatedAt: new Date().toISOString(),
@@ -740,15 +966,17 @@ export const submissionService = {
     }
 
     saveAllLocalSubmissions(updated);
+    const cloudSubmission = await updateCloudSubmission(updatedSubmission);
+    saveAllLocalSubmissions(mergeSubmissions([cloudSubmission], updated));
 
     if (pointsToAward > 0) {
-      updateUserPoints(
+      await updateUserPoints(
         updatedSubmission.playerId || updatedSubmission.userId,
         pointsToAward,
         updatedSubmission.marathonId
       );
     }
 
-    return updatedSubmission as Submission;
+    return cloudSubmission as Submission;
   },
 };
