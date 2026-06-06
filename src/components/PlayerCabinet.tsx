@@ -539,44 +539,17 @@ export default function PlayerCabinet({
   ]);
 
   useEffect(() => {
-    let mounted = true;
+    // Cabinet must not fetch Supabase repeatedly.
+    // App.tsx already loads cloud data and passes it through the submissions prop.
+    // Here we only merge the latest prop with the silent local cache.
+    const cachedMarathons = storageService.loadData<Marathon[]>(
+      storageKeys.marathons,
+      []
+    );
 
-    async function loadCabinetData() {
-      try {
-        const [loadedMarathons, loadedSubmissions] = await Promise.all([
-          marathonService.getMarathons(),
-          submissionService.getSubmissions(),
-        ]);
-
-        if (!mounted) return;
-
-        setMarathons(loadedMarathons as Marathon[]);
-        setLocalSubmissions(mergeSubmissions(loadLocalSubmissions(), loadedSubmissions));
-      } catch (error) {
-        console.warn('Cabinet online load failed, using local cache:', error);
-
-        if (!mounted) return;
-
-        setMarathons(
-          storageService.loadData<Marathon[]>(storageKeys.marathons, [])
-        );
-
-        setLocalSubmissions(loadLocalSubmissions());
-      }
-    }
-
-    loadCabinetData();
-
-    return () => {
-      mounted = false;
-    };
-  }, [
-    cabinetTab,
-    activeMarathonId,
-    currentUser?.id,
-    currentUser?.points,
-    submissions,
-  ]);
+    setMarathons(cachedMarathons);
+    setLocalSubmissions(mergeSubmissions(loadLocalSubmissions(), submissions || []));
+  }, [activeMarathonId, currentUser?.id, submissions]);
 
   const allSubmissions = useMemo(() => {
     return mergeSubmissions(
