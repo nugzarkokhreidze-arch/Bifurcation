@@ -133,7 +133,72 @@ function getFallbackAvatar(nickname: string) {
     nickname || 'player'
   )}`;
 }
+function makeLocalSubmissionId() {
+  return `sub-local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
 
+function fileToDataUrl(file: File | null): Promise<string> {
+  return new Promise(resolve => {
+    if (!file) {
+      resolve('');
+      return;
+    }
+
+    // ძალიან დიდი ვიდეოები localStorage-ში ვერ ჩაეტევა.
+    // Supabase მაინც ცდის ატვირთვას, მაგრამ ლოკალურად ფოტო/აუდიო/პატარა ფაილი გამოჩნდება.
+    const maxLocalSize = 4 * 1024 * 1024;
+
+    if (file.size > maxLocalSize) {
+      resolve('');
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      resolve(typeof reader.result === 'string' ? reader.result : '');
+    };
+
+    reader.onerror = () => {
+      resolve('');
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
+function safeSaveSubmissionToWall(submission: any) {
+  const cachedSubmissions = storageService.loadData<any[]>(
+    storageKeys.submissions,
+    []
+  );
+
+  const nextSubmissions = [
+    submission,
+    ...cachedSubmissions.filter(item => item.id !== submission.id),
+  ];
+
+  try {
+    storageService.saveData(storageKeys.submissions, nextSubmissions);
+  } catch (error) {
+    console.warn('Could not save media submission. Retrying without media:', error);
+
+    const lighterSubmission = {
+      ...submission,
+      fileUrl: '',
+      videoUrl: '',
+      localPreviewUrl: '',
+    };
+
+    storageService.saveData(
+      storageKeys.submissions,
+      [
+        lighterSubmission,
+        ...cachedSubmissions.filter(item => item.id !== submission.id),
+      ]
+    );
+  }
+}
 export default function ChallengeView({
   currentUser,
   onStateUpdate,
@@ -399,66 +464,60 @@ export default function ChallengeView({
     });
   }
 
-  function saveWallReadySubmission(params: {
-    savedSubmission: any;
-    challenge: Challenge;
-    submissionType: ChallengeSubmissionType | MediaType;
-    visibility: 'public' | 'hidden';
-    comment: string;
-  }) {
-    if (!currentUser) return params.savedSubmission;
+function saveWallReadySubmission(params: {
+  savedSubmission: any;
+  challenge: Challenge;
+  submissionType: ChallengeSubmissionType | MediaType;
+  visibility: 'public' | 'hidden';
+  comment: string;
+  localFileUrl?: string;
+}) {
+  if (!currentUser) return params.savedSubmission;
 
-    const publishToWall = params.visibility === 'public';
-    const fileUrl =
-      params.savedSubmission.fileUrl ||
-      params.savedSubmission.videoUrl ||
-      params.savedSubmission.file_url ||
-      params.savedSubmission.video_url ||
-      '';
+  const publishToWall = params.visibility === 'public';
 
-    const wallReadySubmission = {
-      ...params.savedSubmission,
-      playerId: currentUser.id,
-      challengeId: params.challenge.id,
-      marathonId: normalizeMarathonId(selectedMarathonId),
-      submissionType: params.submissionType,
-      visibility: publishToWall ? 'public' : 'hidden',
-      publishToWall,
-      publish_to_wall: publishToWall,
-      approved: true,
-      playerNickname: currentUser.nickname || currentUser.firstName || 'მოთამაშე',
-      playerAvatar:
-        currentUser.avatar ||
-        getFallbackAvatar(currentUser.nickname || currentUser.email || currentUser.id),
-      challengeTitle: getChallengeTitle(params.challenge),
-      comment: params.comment,
-      reflectionText: params.comment,
-      textDescription: params.comment,
-      fileUrl,
-      videoUrl: fileUrl,
-      likedBy: params.savedSubmission.likedBy || [],
-      votedUserIds: params.savedSubmission.votedUserIds || [],
-      votes: params.savedSubmission.votes || 0,
-      likes: params.savedSubmission.likes || 0,
-      createdAt: params.savedSubmission.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+  const fileUrl =
+    params.savedSubmission.fileUrl ||
+    params.savedSubmission.videoUrl ||
+    params.savedSubmission.file_url ||
+    params.savedSubmission.video_url ||
+    params.localFileUrl ||
+    '';
 
-    const cachedSubmissions = storageService.loadData<any[]>(
-      storageKeys.submissions,
-      []
-    );
+  const wallReadySubmission = {
+    ...params.savedSubmission,
+    id: params.savedSubmission.id || makeLocalSubmissionId(),
+    playerId: currentUser.id,
+    challengeId: params.challenge.id,
+    marathonId: normalizeMarathonId(selectedMarathonId),
+    submissionType: params.submissionType,
+    visibility: publishToWall ? 'public' : 'hidden',
+    publishToWall,
+    publish_to_wall: publishToWall,
+    approved: true,
+    playerNickname: currentUser.nickname || currentUser.firstName || 'მოთამაშე',
+    playerAvatar:
+      currentUser.avatar ||
+      getFallbackAvatar(currentUser.nickname || currentUser.email || currentUser.id),
+    challengeTitle: getChallengeTitle(params.challenge),
+    comment: params.comment,
+    reflectionText: params.comment,
+    textDescription: params.comment,
+    fileUrl,
+    videoUrl: fileUrl,
+    localPreviewUrl: params.localFileUrl || '',
+    likedBy: params.savedSubmission.likedBy || [],
+    votedUserIds: params.savedSubmission.votedUserIds || [],
+    votes: params.savedSubmission.votes || 0,
+    likes: params.savedSubmission.likes || 0,
+    createdAt: params.savedSubmission.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
 
-    storageService.saveData(
-      storageKeys.submissions,
-      [
-        wallReadySubmission,
-        ...cachedSubmissions.filter(item => item.id !== wallReadySubmission.id),
-      ]
-    );
+  safeSaveSubmissionToWall(wallReadySubmission);
 
-    return wallReadySubmission;
-  }
+  return wallReadySubmission;
+}
 
   async function handleAcceptChallenge(challengeId: string) {
     if (!currentUser) {
@@ -645,91 +704,129 @@ export default function ChallengeView({
     return true;
   }
 
-  async function handleFormSubmit(event: React.FormEvent) {
-    event.preventDefault();
+async function handleFormSubmit(event: React.FormEvent) {
+  event.preventDefault();
 
-    if (!currentUser || !selectedChallenge) return;
+  if (!currentUser || !selectedChallenge) return;
 
-    setErrorMessage('');
+  setErrorMessage('');
 
-    const marathonId = normalizeMarathonId(selectedMarathonId);
-    const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
+  const marathonId = normalizeMarathonId(selectedMarathonId);
+  const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
 
-    if (record.completedChallenges.includes(selectedChallenge.id)) {
-      setErrorMessage(
-        lang === 'ka'
-          ? 'ეს გამოწვევა უკვე შესრულებულია.'
-          : 'This challenge has already been completed.'
-      );
-      return;
-    }
+  if (record.completedChallenges.includes(selectedChallenge.id)) {
+    setErrorMessage(
+      lang === 'ka'
+        ? 'ეს გამოწვევა უკვე შესრულებულია.'
+        : 'This challenge has already been completed.'
+    );
+    return;
+  }
 
-    const expired = await applyExpiredPenaltyIfNeeded(selectedChallenge.id);
+  const expired = await applyExpiredPenaltyIfNeeded(selectedChallenge.id);
 
-    if (expired) {
-      setErrorMessage(
-        lang === 'ka'
-          ? 'დედლაინი ამოიწურა. ამ გამოწვევის ატვირთვა აღარ შეიძლება.'
-          : 'The deadline has expired. You can no longer upload this challenge.'
-      );
-      return;
-    }
+  if (expired) {
+    setErrorMessage(
+      lang === 'ka'
+        ? 'დედლაინი ამოიწურა. ამ გამოწვევის ატვირთვა აღარ შეიძლება.'
+        : 'The deadline has expired. You can no longer upload this challenge.'
+    );
+    return;
+  }
 
-    if (record.skippedChallenges.includes(selectedChallenge.id)) {
-      setErrorMessage(
-        lang === 'ka'
-          ? 'ეს გამოწვევა აცილებულია. ატვირთვამდე თავიდან მიიღეთ გამოწვევა.'
-          : 'This challenge was skipped. Please accept it again before uploading.'
-      );
-      return;
-    }
+  if (record.skippedChallenges.includes(selectedChallenge.id)) {
+    setErrorMessage(
+      lang === 'ka'
+        ? 'ეს გამოწვევა აცილებულია. ატვირთვამდე თავიდან მიიღეთ გამოწვევა.'
+        : 'This challenge was skipped. Please accept it again before uploading.'
+    );
+    return;
+  }
 
-    if (!record.acceptedChallenges.includes(selectedChallenge.id)) {
-      setErrorMessage(
-        lang === 'ka'
-          ? 'ატვირთვამდე ჯერ უნდა მიიღოთ გამოწვევა.'
-          : 'Please accept the challenge before uploading.'
-      );
-      return;
-    }
+  if (!record.acceptedChallenges.includes(selectedChallenge.id)) {
+    setErrorMessage(
+      lang === 'ka'
+        ? 'ატვირთვამდე ჯერ უნდა მიიღოთ გამოწვევა.'
+        : 'Please accept the challenge before uploading.'
+    );
+    return;
+  }
 
-    const timing = record.acceptedDates?.[selectedChallenge.id];
-    const expireAt = typeof timing === 'string' ? timing : timing?.expireAt;
+  const timing = record.acceptedDates?.[selectedChallenge.id];
+  const expireAt = typeof timing === 'string' ? timing : timing?.expireAt;
 
-    const submissionType: ChallengeSubmissionType | MediaType = isTextSubmission(
-      selectedChallenge.submissionType
-    )
-      ? (selectedChallenge.submissionType as ChallengeSubmissionType)
-      : mediaType;
+  const submissionType: ChallengeSubmissionType | MediaType = isTextSubmission(
+    selectedChallenge.submissionType
+  )
+    ? (selectedChallenge.submissionType as ChallengeSubmissionType)
+    : mediaType;
 
-    if (!isTextSubmission(submissionType as ChallengeSubmissionType) && !selectedFile) {
-      alert(
-        lang === 'ka'
-          ? 'გთხოვთ ატვირთოთ ფოტო, ვიდეო ან აუდიო მტკიცებულება.'
-          : 'Please upload a photo, video or audio proof file.'
-      );
-      return;
-    }
+  if (!isTextSubmission(submissionType as ChallengeSubmissionType) && !selectedFile) {
+    alert(
+      lang === 'ka'
+        ? 'გთხოვთ ატვირთოთ ფოტო, ვიდეო ან აუდიო მტკიცებულება.'
+        : 'Please upload a photo, video or audio proof file.'
+    );
+    return;
+  }
 
-    if (!comment.trim()) {
-      alert(
-        lang === 'ka'
-          ? 'გთხოვთ ჩაწეროთ მოკლე კომენტარი ან რეფლექსია.'
-          : 'Please add a short comment or reflection.'
-      );
-      return;
-    }
+  if (!comment.trim()) {
+    alert(
+      lang === 'ka'
+        ? 'გთხოვთ ჩაწეროთ მოკლე კომენტარი ან რეფლექსია.'
+        : 'Please add a short comment or reflection.'
+    );
+    return;
+  }
 
-    setIsUploading(true);
-    setMessage(lang === 'ka' ? 'მიმდინარეობს ატვირთვა...' : 'Uploading...');
+  setIsUploading(true);
+  setMessage(lang === 'ka' ? 'მიმდინარეობს ატვირთვა...' : 'Uploading...');
+
+  try {
+    const points = calculateCompletionPoints({
+      challenge: selectedChallenge,
+      visibility,
+      expireAt,
+    });
+
+    const localFileUrl = await fileToDataUrl(selectedFile);
+
+    const localDraftSubmission = {
+      id: makeLocalSubmissionId(),
+      playerId: currentUser.id,
+      challengeId: selectedChallenge.id,
+      marathonId,
+      submissionType,
+      visibility,
+      publishToWall: visibility === 'public',
+      publish_to_wall: visibility === 'public',
+      approved: true,
+      comment,
+      reflectionText: comment,
+      textDescription: comment,
+      fileUrl: localFileUrl,
+      videoUrl: localFileUrl,
+      fileName: selectedFile?.name || '',
+      fileMime: selectedFile?.type || '',
+      fileSize: selectedFile?.size || 0,
+      likedBy: [],
+      votedUserIds: [],
+      votes: 0,
+      likes: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    let wallReadySubmission = saveWallReadySubmission({
+      savedSubmission: localDraftSubmission,
+      challenge: selectedChallenge,
+      submissionType,
+      visibility,
+      comment,
+      localFileUrl,
+    });
 
     try {
-      const points = calculateCompletionPoints({
-        challenge: selectedChallenge,
-        visibility,
-        expireAt,
-      });
-
       const savedSubmission = await submissionService.createSubmission({
         playerId: currentUser.id,
         challengeId: selectedChallenge.id,
@@ -741,95 +838,110 @@ export default function ChallengeView({
         file: selectedFile,
       });
 
-      const wallReadySubmission = saveWallReadySubmission({
-        savedSubmission,
+      wallReadySubmission = saveWallReadySubmission({
+        savedSubmission: {
+          ...wallReadySubmission,
+          ...savedSubmission,
+          publishToWall: visibility === 'public',
+          publish_to_wall: visibility === 'public',
+        },
         challenge: selectedChallenge,
         submissionType,
         visibility,
         comment,
+        localFileUrl,
       });
-
-      record.completedChallenges = uniqueList(
-        record.completedChallenges,
-        selectedChallenge.id
-      );
-
-      record.acceptedChallenges = removeFromList(
-        record.acceptedChallenges,
-        selectedChallenge.id
-      );
-
-      record.skippedChallenges = removeFromList(
-        record.skippedChallenges,
-        selectedChallenge.id
-      );
-
-      record.expiredChallenges = removeFromList(
-        record.expiredChallenges,
-        selectedChallenge.id
-      );
-
-      if (visibility === 'public') {
-        record.publicVideos = uniqueList(record.publicVideos, wallReadySubmission.id);
-      } else {
-        record.hiddenVideos = uniqueList(record.hiddenVideos, wallReadySubmission.id);
-      }
-
-      record.points = Math.max(
-        0,
-        (record.points || currentUser.points || 0) + points.totalPoints
-      );
-
-      addPointHistory(record, {
-        challengeId: selectedChallenge.id,
-        submissionId: wallReadySubmission.id,
-        amount: points.totalPoints,
-        reason: 'challenge-completed',
-        breakdown: points,
-      });
-
-      saveRecord(records, record);
-
-      await playerService.markChallengeCompleted({
-        playerId: currentUser.id,
-        challengeId: selectedChallenge.id,
-        visibility,
-        gainedPoints: points.totalPoints,
-      });
+    } catch (submissionError) {
+      console.error('Public submission online save failed:', submissionError);
 
       setMessage(
         lang === 'ka'
-          ? `დავალება წარმატებით აიტვირთა! დაემატა +${points.totalPoints} ქულა 🎉${
-              visibility === 'public'
-                ? ' გამოქვეყნდა მთავარ გვერდზე — სიმამაცის საჯარო კედელზე.'
-                : ' შენახულია პირად არქივში.'
-            }`
-          : `Proof submitted! +${points.totalPoints} points added 🎉${
-              visibility === 'public'
-                ? ' Published on the public courage wall.'
-                : ' Saved privately.'
-            }`
+          ? 'დავალება შეინახა ლოკალურად. Supabase-ში public ჩანაწერის ჩაწერა ვერ მოხერხდა.'
+          : 'Saved locally. Public Supabase submission could not be created.'
       );
-
-      window.setTimeout(() => {
-        setSelectedChallenge(null);
-        resetUploadForm();
-        setForceUpdate(prev => prev + 1);
-        onStateUpdate();
-      }, 900);
-    } catch (error: any) {
-      console.error('Submission error:', error);
-
-      setErrorMessage(
-        error?.message ||
-          (lang === 'ka'
-            ? 'დავალების ატვირთვა ვერ მოხერხდა.'
-            : 'Could not submit the challenge.')
-      );
-    } finally {
-      setIsUploading(false);
     }
+
+    record.completedChallenges = uniqueList(
+      record.completedChallenges,
+      selectedChallenge.id
+    );
+
+    record.acceptedChallenges = removeFromList(
+      record.acceptedChallenges,
+      selectedChallenge.id
+    );
+
+    record.skippedChallenges = removeFromList(
+      record.skippedChallenges,
+      selectedChallenge.id
+    );
+
+    record.expiredChallenges = removeFromList(
+      record.expiredChallenges,
+      selectedChallenge.id
+    );
+
+    if (visibility === 'public') {
+      record.publicVideos = uniqueList(record.publicVideos, wallReadySubmission.id);
+    } else {
+      record.hiddenVideos = uniqueList(record.hiddenVideos, wallReadySubmission.id);
+    }
+
+    record.points = Math.max(
+      0,
+      (record.points || currentUser.points || 0) + points.totalPoints
+    );
+
+    addPointHistory(record, {
+      challengeId: selectedChallenge.id,
+      submissionId: wallReadySubmission.id,
+      amount: points.totalPoints,
+      reason: 'challenge-completed',
+      breakdown: points,
+    });
+
+    saveRecord(records, record);
+
+    await playerService.markChallengeCompleted({
+      playerId: currentUser.id,
+      challengeId: selectedChallenge.id,
+      visibility,
+      gainedPoints: points.totalPoints,
+    });
+
+    setMessage(
+      lang === 'ka'
+        ? `დავალება წარმატებით აიტვირთა! დაემატა +${points.totalPoints} ქულა 🎉${
+            visibility === 'public'
+              ? ' გამოქვეყნდა მთავარ გვერდზე — სიმამაცის საჯარო კედელზე.'
+              : ' შენახულია პირად არქივში.'
+          }`
+        : `Proof submitted! +${points.totalPoints} points added 🎉${
+            visibility === 'public'
+              ? ' Published on the public courage wall.'
+              : ' Saved privately.'
+          }`
+    );
+
+    window.setTimeout(() => {
+      setSelectedChallenge(null);
+      resetUploadForm();
+      setForceUpdate(prev => prev + 1);
+      onStateUpdate();
+    }, 900);
+  } catch (error: any) {
+    console.error('Submission error:', error);
+
+    setErrorMessage(
+      error?.message ||
+        (lang === 'ka'
+          ? 'დავალების ატვირთვა ვერ მოხერხდა.'
+          : 'Could not submit the challenge.')
+    );
+  } finally {
+    setIsUploading(false);
   }
+}
 
   function getChallengeStatus(challenge: Challenge) {
     if (!playerRecord) {
