@@ -49,6 +49,12 @@ function getMediaUrl(submission: any) {
   return submission.fileUrl || submission.videoUrl || '';
 }
 
+function getSubmissionDate(submission: any) {
+  return new Date(
+    submission.createdAt || submission.created_at || submission.updatedAt || 0
+  ).getTime();
+}
+
 export default function PlayerCabinet({
   currentUser,
   submissions,
@@ -70,6 +76,7 @@ export default function PlayerCabinet({
     useState<string>('june');
 
   const activeMarathonId = selectedMarathonId || localSelectedMarathonId;
+  const activeNormalizedMarathonId = normalizeMarathonId(activeMarathonId);
   const selectMarathonId = setSelectedMarathonId || setLocalSelectedMarathonId;
 
   const [localSubmissions, setLocalSubmissions] = useState<any[]>([]);
@@ -111,40 +118,140 @@ export default function PlayerCabinet({
     return () => {
       mounted = false;
     };
-  }, [cabinetTab, activeMarathonId, currentUser?.id, currentUser?.points, submissions]);
+  }, [
+    cabinetTab,
+    activeMarathonId,
+    currentUser?.id,
+    currentUser?.points,
+    submissions,
+  ]);
 
-  const allSubmissions = submissions?.length ? submissions : localSubmissions;
+  const allSubmissions = useMemo(() => {
+    const cachedSubmissions = storageService.loadData<any[]>(
+      storageKeys.submissions,
+      []
+    );
+
+    const merged = new Map<string, any>();
+
+    [...cachedSubmissions, ...localSubmissions, ...(submissions || [])].forEach(
+      submission => {
+        if (submission?.id) {
+          merged.set(submission.id, submission);
+        }
+      }
+    );
+
+    return Array.from(merged.values()).sort(
+      (a, b) => getSubmissionDate(b) - getSubmissionDate(a)
+    );
+  }, [submissions, localSubmissions]);
 
   const userSubmissions = useMemo(() => {
     if (!currentUser) return [];
 
-    return allSubmissions.filter(submission => submission.playerId === currentUser.id);
+    return allSubmissions.filter(
+      submission => submission.playerId === currentUser.id
+    );
   }, [allSubmissions, currentUser]);
 
-  const activeNormalizedMarathonId = normalizeMarathonId(activeMarathonId);
-
-  const livePoints = useMemo(() => {
-    if (!currentUser) return 0;
+  const userMarathonRecord = useMemo(() => {
+    if (!currentUser) return null;
 
     const records =
       monthlyPlayerRecords ||
       storageService.loadData<any[]>(storageKeys.monthlyPlayerRecords, []);
 
-    const currentRecord = records.find(
-      record =>
-        record.playerId === currentUser.id &&
-        record.marathonId === activeNormalizedMarathonId
+    return (
+      records.find(
+        record =>
+          record.playerId === currentUser.id &&
+          record.marathonId === activeNormalizedMarathonId
+      ) || null
+    );
+  }, [monthlyPlayerRecords, activeNormalizedMarathonId, currentUser]);
+
+  const completedChallengeIds = useMemo(() => {
+    const fromRecord = userMarathonRecord?.completedChallenges || [];
+    const fromSubmissions = userSubmissions
+      .map(submission => submission.challengeId)
+      .filter(Boolean);
+
+    return Array.from(new Set([...fromRecord, ...fromSubmissions]));
+  }, [userMarathonRecord, userSubmissions]);
+
+  const completedChallengeCards = useMemo(() => {
+    if (!currentUser) return [];
+
+    const submissionByChallenge = new Map<string, any>();
+
+    userSubmissions.forEach(submission => {
+      if (submission.challengeId) {
+        submissionByChallenge.set(submission.challengeId, submission);
+      }
+    });
+
+    const allChallenges = marathons.flatMap(
+      marathon => marathon.challenges || []
     );
 
-    return currentRecord ? currentRecord.points : currentUser.points || 100;
+    const cardsFromCompletedIds = completedChallengeIds.map(challengeId => {
+      const existingSubmission = submissionByChallenge.get(challengeId);
+
+      if (existingSubmission) {
+        return existingSubmission;
+      }
+
+      const challenge = allChallenges.find(item => item.id === challengeId);
+
+      return {
+        id: `completed-${currentUser.id}-${challengeId}`,
+        playerId: currentUser.id,
+        challengeId,
+        marathonId: activeNormalizedMarathonId,
+        submissionType: 'text',
+        visibility: 'hidden',
+        fileUrl: '',
+        videoUrl: '',
+        comment:
+          lang === 'ka'
+            ? 'გამოწვევა შესრულებულია. მედია ჩანაწერი ჯერ არ ჩანს.'
+            : 'Challenge completed. Media proof is not visible yet.',
+        reflectionText:
+          lang === 'ka'
+            ? 'გამოწვევა შესრულებულია. მედია ჩანაწერი ჯერ არ ჩანს.'
+            : 'Challenge completed. Media proof is not visible yet.',
+        challengeTitle:
+          lang === 'ka'
+            ? challenge?.title || 'გამოწვევა'
+            : challenge?.title_en || challenge?.title || 'Challenge',
+        createdAt: new Date().toISOString(),
+      };
+    });
+
+    const extraSubmissions = userSubmissions.filter(
+      submission => !completedChallengeIds.includes(submission.challengeId)
+    );
+
+    return [...cardsFromCompletedIds, ...extraSubmissions].sort(
+      (a, b) => getSubmissionDate(b) - getSubmissionDate(a)
+    );
   }, [
-    monthlyPlayerRecords,
-    allSubmissions,
-    activeNormalizedMarathonId,
     currentUser,
+    userSubmissions,
+    completedChallengeIds,
+    marathons,
+    activeNormalizedMarathonId,
+    lang,
   ]);
 
-  const completedCount = userSubmissions.length;
+  const livePoints = useMemo(() => {
+    if (!currentUser) return 0;
+
+    return userMarathonRecord ? userMarathonRecord.points : currentUser.points || 100;
+  }, [userMarathonRecord, currentUser]);
+
+  const completedCount = completedChallengeCards.length;
 
   const publicCount = userSubmissions.filter(
     submission => submission.visibility === 'public'
@@ -438,7 +545,9 @@ export default function PlayerCabinet({
 
           const marathonSubmissions = userSubmissions.filter(
             submission =>
-              submission.marathonId === id || submission.marathonId === shortId
+              submission.marathonId === id ||
+              submission.marathonId === shortId ||
+              submission.marathonId === normalizeMarathonId(shortId)
           );
 
           const totalChallenges = marathon.challenges?.length || 10;
@@ -571,7 +680,7 @@ export default function PlayerCabinet({
         )}
 
         {cabinetTab === 'videos' &&
-          (userSubmissions.length === 0 ? (
+          (completedChallengeCards.length === 0 ? (
             <div className="rounded-2xl border bg-white p-12 text-center text-xs font-bold text-slate-400">
               {lang === 'ka'
                 ? 'ჯერ არ გაქვთ შესრულებული გამოწვევები.'
@@ -579,7 +688,7 @@ export default function PlayerCabinet({
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-              {userSubmissions.map((submission: any) => {
+              {completedChallengeCards.map((submission: any) => {
                 const url = getMediaUrl(submission);
 
                 return (
@@ -598,9 +707,27 @@ export default function PlayerCabinet({
                     }
                     className="cursor-pointer space-y-2 rounded-xl border border-violet-100/60 bg-white p-4 text-left shadow-sm transition-all hover:shadow-md"
                   >
-                    <span className="block text-[9px] font-bold uppercase tracking-wider text-[#7C4DFF]">
-                      {submission.submissionType || 'proof'} PROOF
-                    </span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="block text-[9px] font-bold uppercase tracking-wider text-[#7C4DFF]">
+                        {submission.submissionType || 'proof'} PROOF
+                      </span>
+
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${
+                          submission.visibility === 'public'
+                            ? 'bg-emerald-50 text-emerald-600'
+                            : 'bg-purple-50 text-[#7C4DFF]'
+                        }`}
+                      >
+                        {submission.visibility === 'public'
+                          ? lang === 'ka'
+                            ? 'საჯარო'
+                            : 'Public'
+                          : lang === 'ka'
+                            ? 'პირადი'
+                            : 'Private'}
+                      </span>
+                    </div>
 
                     <h4 className="truncate text-xs font-bold text-[#27213F]">
                       {submission.challengeTitle ||
@@ -609,7 +736,7 @@ export default function PlayerCabinet({
                     </h4>
 
                     <div className="group relative flex h-28 items-center justify-center overflow-hidden rounded-lg bg-slate-900 text-xs font-bold text-white">
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition-opacity group-hover:opacity-100">
+                      <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30 opacity-0 transition-opacity group-hover:opacity-100">
                         ▶ {lang === 'ka' ? 'გახსნა' : 'Open'}
                       </div>
 
@@ -628,7 +755,7 @@ export default function PlayerCabinet({
                         />
                       )}
 
-                      {submission.submissionType === 'audio' && (
+                      {submission.submissionType === 'audio' && url && (
                         <Volume2 className="h-6 w-6 text-slate-400" />
                       )}
 
@@ -636,10 +763,20 @@ export default function PlayerCabinet({
                         <span className="px-3 text-center text-[11px] text-slate-400">
                           {submission.reflectionText ||
                             submission.comment ||
-                            (lang === 'ka' ? 'ტექსტური ჩანაწერი' : 'Text log')}
+                            (lang === 'ka'
+                              ? 'ტექსტური ჩანაწერი'
+                              : 'Text log')}
                         </span>
                       )}
                     </div>
+
+                    <p className="line-clamp-2 text-[11px] font-medium text-slate-500">
+                      {submission.comment ||
+                        submission.reflectionText ||
+                        (lang === 'ka'
+                          ? 'შესრულებული გამოწვევა'
+                          : 'Completed challenge')}
+                    </p>
                   </button>
                 );
               })}
@@ -663,7 +800,11 @@ export default function PlayerCabinet({
 
             <div className="grid grid-cols-1 gap-4 pt-2 text-xs sm:grid-cols-2">
               <div className="space-y-2 rounded-xl border bg-slate-50 p-4">
-                <p className="font-bold">✍️ წერილობითი კითხვა (-10 ქულა)</p>
+                <p className="font-bold">
+                  {lang === 'ka'
+                    ? '✍️ წერილობითი კითხვა (-10 ქულა)'
+                    : '✍️ Written question (-10 pts)'}
+                </p>
 
                 <button
                   type="button"
@@ -675,7 +816,11 @@ export default function PlayerCabinet({
               </div>
 
               <div className="space-y-2 rounded-xl border bg-slate-50 p-4">
-                <p className="font-bold">🎥 15-წუთიანი ვიდეო ზარი (-40 ქულა)</p>
+                <p className="font-bold">
+                  {lang === 'ka'
+                    ? '🎥 15-წუთიანი ვიდეო ზარი (-40 ქულა)'
+                    : '🎥 15-minute video call (-40 pts)'}
+                </p>
 
                 <button
                   type="button"
@@ -698,7 +843,7 @@ export default function PlayerCabinet({
             </h3>
 
             <div className="flex max-h-[60vh] min-h-[240px] w-full items-center justify-center overflow-hidden rounded-2xl border bg-black">
-              {fullscreenMedia.type === 'video' && (
+              {fullscreenMedia.type === 'video' && fullscreenMedia.url && (
                 <video
                   src={fullscreenMedia.url}
                   controls
@@ -707,7 +852,7 @@ export default function PlayerCabinet({
                 />
               )}
 
-              {fullscreenMedia.type === 'photo' && (
+              {fullscreenMedia.type === 'photo' && fullscreenMedia.url && (
                 <img
                   src={fullscreenMedia.url}
                   className="max-h-[60vh] object-contain"
@@ -715,7 +860,7 @@ export default function PlayerCabinet({
                 />
               )}
 
-              {fullscreenMedia.type === 'audio' && (
+              {fullscreenMedia.type === 'audio' && fullscreenMedia.url && (
                 <div className="w-full p-12 text-center">
                   <Volume2 className="mx-auto mb-2 h-12 w-12 text-[#7C4DFF]" />
                   <audio
