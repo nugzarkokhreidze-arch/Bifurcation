@@ -4,6 +4,7 @@ import {
   Calendar,
   Flame,
   Sparkles,
+  ExternalLink,
   Volume2,
   X,
 } from 'lucide-react';
@@ -45,14 +46,141 @@ function shortMarathonId(id: string) {
   return id.replace('marathon-', '');
 }
 
+const EXTRA_SUBMISSIONS_KEY = 'bifurcation_submissions';
+
+function getSubmissionStorageKeys() {
+  return Array.from(
+    new Set(
+      [storageKeys.submissions, EXTRA_SUBMISSIONS_KEY].filter(
+        (key): key is string => Boolean(key)
+      )
+    )
+  );
+}
+
 function getMediaUrl(submission: any) {
-  return submission.fileUrl || submission.videoUrl || '';
+  return (
+    submission.tiktokUrl ||
+    submission.tiktok_url ||
+    submission.socialUrl ||
+    submission.social_url ||
+    submission.externalUrl ||
+    submission.external_url ||
+    submission.fileUrl ||
+    submission.videoUrl ||
+    submission.localPreviewUrl ||
+    submission.file_url ||
+    submission.video_url ||
+    submission.local_preview_url ||
+    ''
+  );
+}
+
+function isTikTokSubmission(submission: any) {
+  const type = (submission.submissionType || submission.submission_type || '').toLowerCase();
+  const platform = (submission.socialPlatform || submission.social_platform || '').toLowerCase();
+  const url = getMediaUrl(submission).toLowerCase();
+
+  return (
+    type === 'tiktok' ||
+    type === 'social' ||
+    platform === 'tiktok' ||
+    url.includes('tiktok.com') ||
+    url.includes('vt.tiktok.com') ||
+    url.includes('vm.tiktok.com')
+  );
 }
 
 function getSubmissionDate(submission: any) {
   return new Date(
     submission.createdAt || submission.created_at || submission.updatedAt || 0
   ).getTime();
+}
+
+function getSubmissionText(submission: any) {
+  return (
+    submission.comment ||
+    submission.reflectionText ||
+    submission.textDescription ||
+    submission.description ||
+    submission.reflection_text ||
+    submission.text_description ||
+    ''
+  );
+}
+
+function getSubmissionKey(submission: any) {
+  return (
+    submission.id ||
+    submission.remoteId ||
+    submission.remote_id ||
+    `${submission.playerId || submission.player_id || 'player'}-${
+      submission.challengeId || submission.challenge_id || 'challenge'
+    }-${submission.createdAt || submission.created_at || Date.now()}`
+  );
+}
+
+function loadLocalSubmissions() {
+  const lists = getSubmissionStorageKeys().map(key =>
+    storageService.loadData<any[]>(key, [])
+  );
+
+  return lists.flat();
+}
+
+function mergeSubmissions(...lists: any[][]) {
+  const map = new Map<string, any>();
+
+  lists.flat().forEach(submission => {
+    if (!submission) return;
+
+    const key = getSubmissionKey(submission);
+    const previous = map.get(key) || {};
+
+    map.set(key, {
+      ...previous,
+      ...submission,
+      id: submission.id || previous.id || key,
+      playerId: submission.playerId || submission.player_id || previous.playerId || '',
+      challengeId:
+        submission.challengeId || submission.challenge_id || previous.challengeId || '',
+      marathonId:
+        submission.marathonId || submission.marathon_id || previous.marathonId || '',
+      tiktokUrl: submission.tiktokUrl || submission.tiktok_url || previous.tiktokUrl || '',
+      socialUrl: submission.socialUrl || submission.social_url || previous.socialUrl || '',
+      externalUrl: submission.externalUrl || submission.external_url || previous.externalUrl || '',
+      likedBy:
+        submission.likedBy ||
+        submission.liked_by ||
+        submission.votedUserIds ||
+        submission.voted_user_ids ||
+        previous.likedBy ||
+        [],
+      viewedBy:
+        submission.viewedBy ||
+        submission.viewed_by ||
+        previous.viewedBy ||
+        [],
+      comments:
+        submission.comments ||
+        previous.comments ||
+        [],
+      siteViews:
+        submission.siteViews ||
+        submission.site_views ||
+        previous.siteViews ||
+        0,
+      siteComments:
+        submission.siteComments ||
+        submission.site_comments ||
+        previous.siteComments ||
+        0,
+    });
+  });
+
+  return Array.from(map.values()).sort(
+    (a, b) => getSubmissionDate(b) - getSubmissionDate(a)
+  );
 }
 
 export default function PlayerCabinet({
@@ -97,7 +225,7 @@ export default function PlayerCabinet({
         if (!mounted) return;
 
         setMarathons(loadedMarathons as Marathon[]);
-        setLocalSubmissions(loadedSubmissions);
+        setLocalSubmissions(mergeSubmissions(loadLocalSubmissions(), loadedSubmissions));
       } catch (error) {
         console.warn('Cabinet online load failed, using local cache:', error);
 
@@ -107,9 +235,7 @@ export default function PlayerCabinet({
           storageService.loadData<Marathon[]>(storageKeys.marathons, [])
         );
 
-        setLocalSubmissions(
-          storageService.loadData<any[]>(storageKeys.submissions, [])
-        );
+        setLocalSubmissions(loadLocalSubmissions());
       }
     }
 
@@ -127,23 +253,10 @@ export default function PlayerCabinet({
   ]);
 
   const allSubmissions = useMemo(() => {
-    const cachedSubmissions = storageService.loadData<any[]>(
-      storageKeys.submissions,
-      []
-    );
-
-    const merged = new Map<string, any>();
-
-    [...cachedSubmissions, ...localSubmissions, ...(submissions || [])].forEach(
-      submission => {
-        if (submission?.id) {
-          merged.set(submission.id, submission);
-        }
-      }
-    );
-
-    return Array.from(merged.values()).sort(
-      (a, b) => getSubmissionDate(b) - getSubmissionDate(a)
+    return mergeSubmissions(
+      loadLocalSubmissions(),
+      localSubmissions,
+      submissions || []
     );
   }, [submissions, localSubmissions]);
 
@@ -254,7 +367,11 @@ export default function PlayerCabinet({
   const completedCount = completedChallengeCards.length;
 
   const publicCount = userSubmissions.filter(
-    submission => submission.visibility === 'public'
+    submission =>
+      submission.visibility === 'public' ||
+      submission.publishToWall === true ||
+      submission.publish_to_wall === true ||
+      submission.isPublic === true
   ).length;
 
   async function handleBookConsultation(type: 'question' | 'video') {
@@ -690,6 +807,14 @@ export default function PlayerCabinet({
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
               {completedChallengeCards.map((submission: any) => {
                 const url = getMediaUrl(submission);
+                const isTiktok = isTikTokSubmission(submission);
+                const type = isTiktok ? 'tiktok' : submission.submissionType;
+                const siteViews =
+                  submission.siteViews || submission.site_views || submission.viewedBy?.length || 0;
+                const siteLikes =
+                  submission.siteLikes || submission.site_likes || submission.likedBy?.length || submission.votes || 0;
+                const siteComments =
+                  submission.siteComments || submission.site_comments || submission.comments?.length || 0;
 
                 return (
                   <button
@@ -698,7 +823,7 @@ export default function PlayerCabinet({
                     onClick={() =>
                       setFullscreenMedia({
                         url,
-                        type: submission.submissionType,
+                        type,
                         title:
                           submission.challengeTitle ||
                           submission.challenge_title ||
@@ -709,17 +834,21 @@ export default function PlayerCabinet({
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="block text-[9px] font-bold uppercase tracking-wider text-[#7C4DFF]">
-                        {submission.submissionType || 'proof'} PROOF
+                        {isTiktok ? 'TIKTOK LINK' : `${submission.submissionType || 'proof'} PROOF`}
                       </span>
 
                       <span
                         className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${
-                          submission.visibility === 'public'
+                          submission.visibility === 'public' ||
+                          submission.publishToWall === true ||
+                          submission.publish_to_wall === true
                             ? 'bg-emerald-50 text-emerald-600'
                             : 'bg-purple-50 text-[#7C4DFF]'
                         }`}
                       >
-                        {submission.visibility === 'public'
+                        {submission.visibility === 'public' ||
+                        submission.publishToWall === true ||
+                        submission.publish_to_wall === true
                           ? lang === 'ka'
                             ? 'საჯარო'
                             : 'Public'
@@ -740,14 +869,23 @@ export default function PlayerCabinet({
                         ▶ {lang === 'ka' ? 'გახსნა' : 'Open'}
                       </div>
 
-                      {submission.submissionType === 'video' && url && (
+                      {isTiktok && url && (
+                        <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-slate-950 via-[#111827] to-[#2d0b45] text-center">
+                          <ExternalLink className="mb-2 h-6 w-6 text-fuchsia-200" />
+                          <span className="text-[10px] font-black uppercase tracking-widest text-fuchsia-100">
+                            TikTok Proof
+                          </span>
+                        </div>
+                      )}
+
+                      {!isTiktok && submission.submissionType === 'video' && url && (
                         <video
                           src={url}
                           className="h-full w-full object-cover"
                         />
                       )}
 
-                      {submission.submissionType === 'photo' && url && (
+                      {!isTiktok && submission.submissionType === 'photo' && url && (
                         <img
                           src={url}
                           className="h-full w-full object-cover"
@@ -755,14 +893,13 @@ export default function PlayerCabinet({
                         />
                       )}
 
-                      {submission.submissionType === 'audio' && url && (
+                      {!isTiktok && submission.submissionType === 'audio' && url && (
                         <Volume2 className="h-6 w-6 text-slate-400" />
                       )}
 
                       {!url && (
                         <span className="px-3 text-center text-[11px] text-slate-400">
-                          {submission.reflectionText ||
-                            submission.comment ||
+                          {getSubmissionText(submission) ||
                             (lang === 'ka'
                               ? 'ტექსტური ჩანაწერი'
                               : 'Text log')}
@@ -770,9 +907,14 @@ export default function PlayerCabinet({
                       )}
                     </div>
 
+                    <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-black text-slate-500">
+                      <div className="rounded-lg bg-violet-50 py-1.5">👁 {siteViews}</div>
+                      <div className="rounded-lg bg-rose-50 py-1.5">❤️ {siteLikes}</div>
+                      <div className="rounded-lg bg-emerald-50 py-1.5">💬 {siteComments}</div>
+                    </div>
+
                     <p className="line-clamp-2 text-[11px] font-medium text-slate-500">
-                      {submission.comment ||
-                        submission.reflectionText ||
+                      {getSubmissionText(submission) ||
                         (lang === 'ka'
                           ? 'შესრულებული გამოწვევა'
                           : 'Completed challenge')}
@@ -843,6 +985,29 @@ export default function PlayerCabinet({
             </h3>
 
             <div className="flex max-h-[60vh] min-h-[240px] w-full items-center justify-center overflow-hidden rounded-2xl border bg-black">
+              {fullscreenMedia.type === 'tiktok' && fullscreenMedia.url && (
+                <div className="flex h-full min-h-[240px] w-full flex-col items-center justify-center bg-gradient-to-br from-slate-950 via-[#111827] to-[#2d0b45] p-8 text-center">
+                  <ExternalLink className="mb-4 h-12 w-12 text-fuchsia-200" />
+                  <p className="text-sm font-black uppercase tracking-[0.2em] text-fuchsia-100">
+                    TikTok Proof
+                  </p>
+                  <p className="mt-3 max-w-md text-xs leading-6 text-slate-300">
+                    {lang === 'ka'
+                      ? 'ვიდეო TikTok-ზეა გამოქვეყნებული. გახსენი ბმული ახალ ფანჯარაში.'
+                      : 'The video is published on TikTok. Open the link in a new tab.'}
+                  </p>
+                  <a
+                    href={fullscreenMedia.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-6 inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-xs font-black text-slate-950"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    {lang === 'ka' ? 'TikTok-ზე ნახვა' : 'Open on TikTok'}
+                  </a>
+                </div>
+              )}
+
               {fullscreenMedia.type === 'video' && fullscreenMedia.url && (
                 <video
                   src={fullscreenMedia.url}
