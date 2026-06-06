@@ -87,6 +87,33 @@ function shortMarathonId(id: string) {
   return id.replace('marathon-', '');
 }
 
+function getOrCreateGuestVoterId() {
+  if (typeof window === 'undefined') return '';
+
+  const existing = localStorage.getItem('bifurcation_guest_voter_id');
+
+  if (existing) return existing;
+
+  const created = `guest-voter-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+
+  localStorage.setItem('bifurcation_guest_voter_id', created);
+
+  return created;
+}
+
+function mergeById<T extends { id?: string }>(...lists: T[][]) {
+  const map = new Map<string, T>();
+
+  lists.flat().forEach(item => {
+    if (!item?.id) return;
+    map.set(item.id, { ...(map.get(item.id) || ({} as T)), ...item });
+  });
+
+  return Array.from(map.values());
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [authMode, setAuthMode] = useState<AuthMode>('login');
@@ -117,48 +144,130 @@ export default function App() {
 
   const displayUser = currentUser || createGuestUser();
 
+  function refreshFromLocal() {
+    const localCurrentUser = storageService.loadData<User | null>(
+      storageKeys.currentUser,
+      null
+    );
+
+    const localMarathons = storageService.loadData<Marathon[]>(
+      storageKeys.marathons,
+      []
+    );
+
+    const localSubmissions = storageService.loadData<Submission[]>(
+      storageKeys.submissions,
+      []
+    );
+
+    const localUsers = storageService.loadData<User[]>(storageKeys.users, []);
+
+    const localRecords = storageService.loadData<any[]>(
+      storageKeys.monthlyPlayerRecords,
+      []
+    );
+
+    setCurrentUser(localCurrentUser);
+    setMarathons(localMarathons);
+    setSubmissions(localSubmissions);
+    setUsers(localUsers);
+    setMonthlyPlayerRecords(localRecords);
+  }
+
   async function loadAppState() {
     try {
       setErrorMessage('');
 
-      const [sessionUser, loadedMarathons, loadedSubmissions, loadedUsers] =
-        await Promise.all([
-          authService.restoreSession(),
-          marathonService.getMarathons(),
-          submissionService.getSubmissions(),
-          playerService.getAllPlayers(),
-        ]);
+      const localCurrentUser = storageService.loadData<User | null>(
+        storageKeys.currentUser,
+        null
+      );
 
-      const records = storageService.loadData<any[]>(
+      const localMarathons = storageService.loadData<Marathon[]>(
+        storageKeys.marathons,
+        []
+      );
+
+      const localSubmissions = storageService.loadData<Submission[]>(
+        storageKeys.submissions,
+        []
+      );
+
+      const localUsers = storageService.loadData<User[]>(storageKeys.users, []);
+
+      const localRecords = storageService.loadData<any[]>(
         storageKeys.monthlyPlayerRecords,
         []
       );
 
-      setCurrentUser(sessionUser);
-      setMarathons(loadedMarathons as Marathon[]);
+      setCurrentUser(localCurrentUser);
+      setMarathons(localMarathons);
+      setSubmissions(localSubmissions);
+      setUsers(localUsers);
+      setMonthlyPlayerRecords(localRecords);
+
+      let sessionUser: User | null = localCurrentUser;
+      let loadedMarathons: Marathon[] = localMarathons;
+      let loadedSubmissions: Submission[] = localSubmissions;
+      let loadedUsers: User[] = localUsers;
+
+      try {
+        sessionUser = await authService.restoreSession();
+      } catch (error) {
+        console.warn('Session restore failed, using local user:', error);
+      }
+
+      try {
+        const onlineMarathons = (await marathonService.getMarathons()) as Marathon[];
+        loadedMarathons = onlineMarathons.length
+          ? mergeById(localMarathons, onlineMarathons)
+          : localMarathons;
+      } catch (error) {
+        console.warn('Marathons online load failed, using local:', error);
+      }
+
+      try {
+        const onlineSubmissions = await submissionService.getSubmissions();
+        const latestLocalSubmissions = storageService.loadData<Submission[]>(
+          storageKeys.submissions,
+          []
+        );
+
+        loadedSubmissions = mergeById(
+          localSubmissions,
+          latestLocalSubmissions,
+          onlineSubmissions
+        ) as Submission[];
+
+        storageService.saveData(storageKeys.submissions, loadedSubmissions);
+      } catch (error) {
+        console.warn('Submissions online load failed, using local:', error);
+      }
+
+      try {
+        const onlineUsers = await playerService.getAllPlayers();
+        loadedUsers = mergeById(localUsers, onlineUsers) as User[];
+      } catch (error) {
+        console.warn('Players online load failed, using local:', error);
+      }
+
+      const latestRecords = storageService.loadData<any[]>(
+        storageKeys.monthlyPlayerRecords,
+        []
+      );
+
+      setCurrentUser(sessionUser || localCurrentUser);
+      setMarathons(loadedMarathons);
       setSubmissions(loadedSubmissions);
       setUsers(loadedUsers);
-      setMonthlyPlayerRecords(records);
+      setMonthlyPlayerRecords(latestRecords);
+
+      if (sessionUser) {
+        storageService.saveData(storageKeys.currentUser, sessionUser);
+      }
     } catch (error: any) {
-      console.warn('App state online load failed. Using local cache:', error);
-
-      setCurrentUser(
-        storageService.loadData<User | null>(storageKeys.currentUser, null)
-      );
-
-      setMarathons(
-        storageService.loadData<Marathon[]>(storageKeys.marathons, [])
-      );
-
-      setSubmissions(
-        storageService.loadData<Submission[]>(storageKeys.submissions, [])
-      );
-
-      setUsers(storageService.loadData<User[]>(storageKeys.users, []));
-
-      setMonthlyPlayerRecords(
-        storageService.loadData<any[]>(storageKeys.monthlyPlayerRecords, [])
-      );
+      console.warn('App state load failed. Using local cache:', error);
+      refreshFromLocal();
     }
   }
 
@@ -172,26 +281,14 @@ export default function App() {
     init();
 
     const unsubscribe = storageService.subscribe(() => {
-      setMonthlyPlayerRecords(
-        storageService.loadData<any[]>(storageKeys.monthlyPlayerRecords, [])
-      );
-
-      setSubmissions(
-        storageService.loadData<Submission[]>(storageKeys.submissions, [])
-      );
-
-      setUsers(storageService.loadData<User[]>(storageKeys.users, []));
-
-      setCurrentUser(
-        storageService.loadData<User | null>(storageKeys.currentUser, null)
-      );
+      refreshFromLocal();
     });
 
     return unsubscribe;
   }, []);
 
   async function handleStateUpdate() {
-    await loadAppState();
+    refreshFromLocal();
   }
 
   async function handleLogin(event: FormEvent) {
@@ -203,6 +300,9 @@ export default function App() {
       setMessage('');
 
       const user = await authService.loginPlayer(form.identifier, form.password);
+
+      storageService.saveData(storageKeys.currentUser, user);
+      storageService.saveData(storageKeys.currentUserId, user.id);
 
       setCurrentUser(user);
       setMessage('წარმატებით შეხვედით თამაშში.');
@@ -238,6 +338,9 @@ export default function App() {
         preferredLanguage: 'ka',
       });
 
+      storageService.saveData(storageKeys.currentUser, user);
+      storageService.saveData(storageKeys.currentUserId, user.id);
+
       setCurrentUser(user);
       setMessage('რეგისტრაცია წარმატებით დასრულდა.');
       setTab('challenges');
@@ -264,6 +367,7 @@ export default function App() {
 
     const updated = await playerService.updatePlayer(currentUser.id, data);
 
+    storageService.saveData(storageKeys.currentUser, updated);
     setCurrentUser(updated);
     await loadAppState();
 
@@ -276,17 +380,19 @@ export default function App() {
   }
 
   async function handleLandingVote(submissionId: string) {
-    if (!currentUser) {
-      setTab('profile');
-      setAuthMode('login');
-      setMessage('ხმის მისაცემად გთხოვთ გაიაროთ ავტორიზაცია.');
-      return;
-    }
-
     try {
       setErrorMessage('');
-      await submissionService.voteSubmission(submissionId, currentUser.id);
-      await loadAppState();
+
+      const voterId = currentUser?.id || getOrCreateGuestVoterId();
+
+      await submissionService.voteSubmission(submissionId, voterId);
+
+      refreshFromLocal();
+      setMessage(
+        currentUser
+          ? 'მხარდაჭერა დაფიქსირდა. ავტორს დაემატება +5 ქულა, თქვენ კი +2 ქულა.'
+          : 'მხარდაჭერა დაფიქსირდა. ავტორს დაემატება +5 ქულა.'
+      );
     } catch (error: any) {
       setErrorMessage(error?.message || 'ხმის მიცემა ვერ მოხერხდა.');
     }
@@ -347,11 +453,20 @@ export default function App() {
         );
 
         const publicSubmissions = userSubmissions.filter(
-          submission => submission.visibility === 'public'
+          submission =>
+            submission.visibility === 'public' ||
+            (submission as any).publishToWall === true ||
+            (submission as any).publish_to_wall === true
         );
 
         const votesReceived = userSubmissions.reduce(
-          (sum, submission) => sum + (submission.votes || submission.likes || 0),
+          (sum, submission) =>
+            sum +
+            (submission.votes ||
+              submission.likes ||
+              submission.likedBy?.length ||
+              submission.votedUserIds?.length ||
+              0),
           0
         );
 
@@ -615,33 +730,14 @@ export default function App() {
             <section>
               <SectionTitle
                 title="საჯარო კედელი"
-                subtitle="აქ გამოჩნდება მოთამაშეების საჯარო აქტივობები."
+                subtitle="აქ გამოჩნდება მონაწილეების მიერ მთავარ გვერდზე გამოსაქვეყნებლად დადასტურებული ვიდეო, ფოტო, აუდიო და ტექსტური აქტივობები."
               />
 
-              {currentUser ? (
-                <VideoFeed
-                  currentUser={currentUser}
-                  onStateUpdate={handleStateUpdate}
-                  lang="ka"
-                />
-              ) : (
-                <div className="rounded-3xl border border-violet-100 bg-white p-8 text-center">
-                  <p className="text-sm font-bold text-slate-500">
-                    საჯარო კედლის სანახავად გაიარეთ ავტორიზაცია.
-                  </p>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTab('profile');
-                      setAuthMode('login');
-                    }}
-                    className="mt-4 rounded-2xl bg-violet-600 px-6 py-3 font-black text-white"
-                  >
-                    შესვლა
-                  </button>
-                </div>
-              )}
+              <VideoFeed
+                currentUser={currentUser}
+                onStateUpdate={handleStateUpdate}
+                lang="ka"
+              />
             </section>
           )}
 
