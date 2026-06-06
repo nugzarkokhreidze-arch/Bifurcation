@@ -298,7 +298,7 @@ export default function App() {
   }, []);
 
   async function handleStateUpdate() {
-    refreshFromLocal();
+    await loadAppState();
   }
 
   function clearAuthForm() {
