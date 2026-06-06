@@ -1,8 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { User } from '../types';
-import { storageService, storageKeys } from '../services/storageService';
-import { playerService } from '../services/playerService';
+import { useEffect, useMemo, useState } from 'react';
 import { Trophy } from 'lucide-react';
+
+import { User } from '../types';
+import {
+  STORAGE_UPDATE_EVENT,
+  storageKeys,
+  storageService,
+} from '../services/storageService';
 
 interface LiveLeaderboardSidebarProps {
   currentUser: User | null;
@@ -10,15 +14,37 @@ interface LiveLeaderboardSidebarProps {
   monthlyPlayerRecords?: any[];
 }
 
-function normalizeMarathonId(id?: string) {
-  if (!id) return 'marathon-june';
-  return id.startsWith('marathon-') ? id : `marathon-${id}`;
-}
-
 function getFallbackAvatar(nickname?: string) {
   return `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(
     nickname || 'player'
   )}`;
+}
+
+function isActivePlayer(player: any) {
+  const status = player?.status || 'active';
+
+  return (
+    player?.id &&
+    !player.isAdmin &&
+    !player.banned &&
+    status !== 'cancelled' &&
+    status !== 'deleted' &&
+    status !== 'inactive'
+  );
+}
+
+function loadSubmissions() {
+  const fromMain = storageService.loadData<any[]>(storageKeys.submissions, []);
+  const fromLegacy = storageService.loadData<any[]>('submissions', []);
+
+  const map = new Map<string, any>();
+
+  [...fromMain, ...fromLegacy].forEach(item => {
+    if (!item?.id) return;
+    map.set(item.id, { ...(map.get(item.id) || {}), ...item });
+  });
+
+  return Array.from(map.values());
 }
 
 function uniquePlayers(players: any[]) {
@@ -32,7 +58,7 @@ function uniquePlayers(players: any[]) {
     map.set(player.id, {
       ...(existing || {}),
       ...player,
-      points: player.points ?? existing?.points ?? 100,
+      points: Number(player.points ?? existing?.points ?? 100),
       nickname:
         player.nickname ||
         existing?.nickname ||
@@ -56,85 +82,62 @@ export default function LiveLeaderboardSidebar({
 }: LiveLeaderboardSidebarProps) {
   const [players, setPlayers] = useState<any[]>([]);
   const [records, setRecords] = useState<any[]>([]);
+  const [submissions, setSubmissions] = useState<any[]>([]);
 
-  useEffect(() => {
-    let mounted = true;
+  function loadLeaderboardData() {
+    const cachedUsers = storageService.loadData<any[]>(storageKeys.users, []);
+    const cachedCurrentUser = storageService.loadData<any | null>(
+      storageKeys.currentUser,
+      null
+    );
 
-    async function loadPlayers() {
-      const cachedUsers = storageService.loadData<any[]>(storageKeys.users, []);
-      const cachedCurrentUser = storageService.loadData<any | null>(
-        storageKeys.currentUser,
-        null
-      );
-
-      const localPlayers = uniquePlayers([
+    setPlayers(
+      uniquePlayers([
         ...cachedUsers,
         ...(cachedCurrentUser ? [cachedCurrentUser] : []),
         ...(currentUser ? [currentUser] : []),
-      ]);
+      ]).filter(isActivePlayer)
+    );
 
-      if (mounted) {
-        setPlayers(localPlayers);
-      }
+    setRecords(
+      monthlyPlayerRecords?.length
+        ? monthlyPlayerRecords
+        : storageService.loadData<any[]>(storageKeys.monthlyPlayerRecords, [])
+    );
 
-      try {
-        const onlinePlayers = await playerService.getAllPlayers();
+    setSubmissions(loadSubmissions());
+  }
 
-        if (!mounted) return;
+  useEffect(() => {
+    loadLeaderboardData();
 
-        setPlayers(
-          uniquePlayers([
-            ...localPlayers,
-            ...(onlinePlayers || []),
-            ...(currentUser ? [currentUser] : []),
-          ])
-        );
-      } catch (error) {
-        console.warn('Leaderboard online players load failed:', error);
-      }
-    }
+    const onStorageUpdate = () => loadLeaderboardData();
+    const onFocus = () => loadLeaderboardData();
 
-    function loadRecords() {
-      const localRecords = storageService.loadData<any[]>(
-        storageKeys.monthlyPlayerRecords,
-        []
-      );
-
-      setRecords(monthlyPlayerRecords?.length ? monthlyPlayerRecords : localRecords);
-    }
-
-    loadPlayers();
-    loadRecords();
-
-    const interval = window.setInterval(() => {
-      loadPlayers();
-      loadRecords();
-    }, 2500);
+    window.addEventListener(STORAGE_UPDATE_EVENT, onStorageUpdate);
+    window.addEventListener('focus', onFocus);
 
     return () => {
-      mounted = false;
-      window.clearInterval(interval);
+      window.removeEventListener(STORAGE_UPDATE_EVENT, onStorageUpdate);
+      window.removeEventListener('focus', onFocus);
     };
-  }, [currentUser, monthlyPlayerRecords]);
+  }, [currentUser?.id, currentUser?.points, monthlyPlayerRecords]);
 
   const rankedPlayers = useMemo(() => {
-    const activeMarathonId = normalizeMarathonId('june');
-
     const mergedPlayers = uniquePlayers([
       ...players,
       ...(currentUser ? [currentUser] : []),
       ...storageService.loadData<any[]>(storageKeys.users, []),
-    ]);
+    ]).filter(isActivePlayer);
 
     return mergedPlayers
       .map(player => {
+        const userSubmissions = submissions.filter(
+          submission => submission.playerId === player.id || submission.userId === player.id
+        );
+
         const record =
-          records.find(
-            item =>
-              item.playerId === player.id &&
-              normalizeMarathonId(item.marathonId) === activeMarathonId
-          ) ||
-          records.find(item => item.playerId === player.id);
+          records.find(item => item.playerId === player.id) || null;
 
         return {
           ...player,
@@ -146,17 +149,34 @@ export default function LiveLeaderboardSidebar({
           avatar:
             player.avatar ||
             getFallbackAvatar(player.nickname || player.email || player.id),
-          livePoints: Number(record?.points ?? player.points ?? 100),
-          completedCount: record?.completedChallenges?.length || 0,
+          livePoints: Number(player.points ?? 100),
+          completedCount:
+            player.completedChallenges?.length ||
+            record?.completedChallenges?.length ||
+            userSubmissions.length ||
+            0,
+          votesReceived: userSubmissions.reduce(
+            (sum, submission) =>
+              sum +
+              (submission.votes ||
+                submission.likes ||
+                submission.likedBy?.length ||
+                submission.votedUserIds?.length ||
+                0),
+            0
+          ),
         };
       })
       .filter(player => player.id && !player.banned)
       .sort((a, b) => {
         if (b.livePoints !== a.livePoints) return b.livePoints - a.livePoints;
-        return b.completedCount - a.completedCount;
+        if (b.completedCount !== a.completedCount) {
+          return b.completedCount - a.completedCount;
+        }
+        return b.votesReceived - a.votesReceived;
       })
       .slice(0, 10);
-  }, [players, records, currentUser, lang]);
+  }, [players, records, submissions, currentUser, lang]);
 
   return (
     <div className="w-full shrink-0 select-none rounded-3xl border border-violet-900/40 bg-[#131129] p-5 text-white shadow-xl lg:w-72">
@@ -166,11 +186,11 @@ export default function LiveLeaderboardSidebar({
 
           <div>
             <h4 className="text-xs font-black uppercase tracking-wider">
-              {lang === 'ka' ? 'LIVE რეიტინგი' : 'Leaderboard'}
+              {lang === 'ka' ? 'TOP 10 რეიტინგი' : 'Top 10 leaderboard'}
             </h4>
 
             <span className="block font-mono text-[8px] font-bold uppercase text-purple-400/80">
-              ● ONLINE SYNC
+              ● REGISTERED PLAYERS
             </span>
           </div>
         </div>
@@ -221,28 +241,26 @@ export default function LiveLeaderboardSidebar({
                   />
 
                   <div className="min-w-0">
-                    <p
-                      className={`max-w-[95px] truncate text-xs font-black ${
-                        isMe ? 'text-purple-200' : 'text-slate-200'
-                      }`}
-                    >
+                    <p className="truncate text-xs font-black text-white">
                       @{player.nickname}
                     </p>
 
-                    <p className="text-[9px] font-bold text-slate-500">
-                      {lang === 'ka'
-                        ? `${player.completedCount} შესრულებული`
-                        : `${player.completedCount} completed`}
+                    <p className="text-[9px] font-bold text-slate-400">
+                      {player.completedCount}{' '}
+                      {lang === 'ka' ? 'შესრულება' : 'completed'}
                     </p>
                   </div>
                 </div>
 
-                <span className="shrink-0 font-mono text-xs font-black text-amber-400">
-                  {player.livePoints}{' '}
-                  <span className="text-[10px]">
+                <div className="text-right">
+                  <p className="font-mono text-sm font-black text-amber-300">
+                    {player.livePoints}
+                  </p>
+
+                  <p className="text-[8px] font-bold uppercase text-slate-500">
                     {lang === 'ka' ? 'ქულა' : 'pts'}
-                  </span>
-                </span>
+                  </p>
+                </div>
               </div>
             );
           })
