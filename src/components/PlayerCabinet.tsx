@@ -549,24 +549,26 @@ export default function PlayerCabinet({
         </div>
 
         {currentUser ? (
-          <div className="min-w-[160px] rounded-2xl bg-gradient-to-br from-[#6C40E7] to-[#4A24B2] px-6 py-4 text-center text-white shadow-md md:text-right">
-            <p className="text-[10px] font-black uppercase tracking-widest text-purple-200">
-              {lang === 'ka' ? 'თქვენი ბალანსი' : 'Your balance'}
-            </p>
+          <div className="flex flex-col items-center gap-3 sm:flex-row">
+            <div className="min-w-[160px] rounded-2xl bg-gradient-to-br from-[#6C40E7] to-[#4A24B2] px-6 py-4 text-center text-white shadow-md md:text-right">
+              <p className="text-[10px] font-black uppercase tracking-widest text-purple-200">
+                {lang === 'ka' ? 'თქვენი ბალანსი' : 'Your balance'}
+              </p>
 
-            <p className="mt-1 flex items-center justify-center gap-1.5 font-mono text-3xl font-black md:justify-end">
-              {livePoints}
-              <span className="text-xl">🪙</span>
-            </p>
+              <p className="mt-1 flex items-center justify-center gap-1.5 font-mono text-3xl font-black md:justify-end">
+                {livePoints}
+                <span className="text-xl">🪙</span>
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={onLeaveGame}
+              className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-[11px] font-black text-rose-700"
+            >
+              {lang === 'ka' ? 'კაბინეტის გაუქმება' : 'Cancel cabinet'}
+            </button>
           </div>
-
-          <button
-            type="button"
-            onClick={onLeaveGame}
-            className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-[11px] font-black text-rose-700"
-          >
-            {lang === 'ka' ? 'კაბინეტის გაუქმება' : 'Cancel cabinet'}
-          </button>
         ) : (
           <div className="flex flex-col gap-2 sm:flex-row">
             <button
