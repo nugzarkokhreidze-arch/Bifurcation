@@ -16,6 +16,7 @@ import {
   Trophy,
   Play,
   ArrowRight,
+  ExternalLink,
   X,
 } from 'lucide-react';
 
@@ -66,13 +67,48 @@ function getOrCreateGuestVoterId() {
   return created;
 }
 
+const EXTRA_SUBMISSIONS_KEY = 'bifurcation_submissions';
+
+function getSubmissionStorageKeys() {
+  return Array.from(
+    new Set(
+      [storageKeys.submissions, EXTRA_SUBMISSIONS_KEY].filter(
+        (key): key is string => Boolean(key)
+      )
+    )
+  );
+}
+
 function getSubmissionUrl(submission: any) {
   return (
+    submission.tiktokUrl ||
+    submission.tiktok_url ||
+    submission.socialUrl ||
+    submission.social_url ||
+    submission.externalUrl ||
+    submission.external_url ||
     submission.fileUrl ||
     submission.videoUrl ||
+    submission.localPreviewUrl ||
     submission.file_url ||
     submission.video_url ||
+    submission.local_preview_url ||
     ''
+  );
+}
+
+function isTikTokSubmission(submission: any) {
+  const type = (submission.submissionType || submission.submission_type || '').toLowerCase();
+  const platform = (submission.socialPlatform || submission.social_platform || '').toLowerCase();
+  const url = getSubmissionUrl(submission).toLowerCase();
+
+  return (
+    type === 'tiktok' ||
+    type === 'social' ||
+    platform === 'tiktok' ||
+    url.includes('tiktok.com') ||
+    url.includes('vt.tiktok.com') ||
+    url.includes('vm.tiktok.com')
   );
 }
 
@@ -82,6 +118,8 @@ function getSubmissionText(submission: any) {
     submission.reflectionText ||
     submission.comment ||
     submission.description ||
+    submission.text_description ||
+    submission.reflection_text ||
     ''
   );
 }
@@ -96,56 +134,167 @@ function getSubmissionCreatedAt(submission: any) {
   ).getTime();
 }
 
+function getSubmissionKey(submission: any) {
+  return (
+    submission.id ||
+    submission.remoteId ||
+    submission.remote_id ||
+    `${submission.playerId || submission.player_id || 'player'}-${
+      submission.challengeId || submission.challenge_id || 'challenge'
+    }-${submission.createdAt || submission.created_at || Date.now()}`
+  );
+}
+
 function detectMediaType(submission: any) {
-  const type = submission.submissionType || submission.submission_type || '';
+  const type = (submission.submissionType || submission.submission_type || '').toLowerCase();
   const url = getSubmissionUrl(submission);
 
-  if (type === 'photo' || url.match(/\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i) || url.startsWith('data:image/')) {
+  if (isTikTokSubmission(submission)) return 'tiktok';
+
+  if (type === 'photo' || url.match(/\.(jpeg|jpg|gif|png|webp|svg|heic|heif)($|\?)/i) || url.startsWith('data:image/')) {
     return 'photo';
   }
 
-  if (type === 'audio' || url.match(/\.(mp3|wav|ogg|aac|m4a)($|\?)/i) || url.startsWith('data:audio/')) {
+  if (type === 'audio' || url.match(/\.(mp3|wav|ogg|aac|m4a|mpeg)($|\?)/i) || url.startsWith('data:audio/')) {
     return 'audio';
   }
 
-  if (type === 'video' || url.match(/\.(mp4|webm|mov|m4v)($|\?)/i) || url.startsWith('data:video/')) {
+  if (type === 'video' || url.match(/\.(mp4|webm|mov|m4v|quicktime)($|\?)/i) || url.startsWith('data:video/')) {
     return 'video';
   }
 
   if (!url) return 'text';
 
-  return 'video';
+  return 'link';
 }
 
 function mergeSubmissions(...lists: any[][]) {
   const map = new Map<string, any>();
 
   lists.flat().forEach(item => {
-    if (!item?.id) return;
+    if (!item) return;
 
-    const previous = map.get(item.id) || {};
+    const key = getSubmissionKey(item);
+    const previous = map.get(key) || {};
 
-    map.set(item.id, {
+    const likedBy =
+      item.likedBy ||
+      item.liked_by ||
+      item.votedUserIds ||
+      item.voted_user_ids ||
+      previous.likedBy ||
+      previous.liked_by ||
+      previous.votedUserIds ||
+      previous.voted_user_ids ||
+      [];
+
+    const viewedBy =
+      item.viewedBy ||
+      item.viewed_by ||
+      previous.viewedBy ||
+      previous.viewed_by ||
+      [];
+
+    const comments =
+      item.comments ||
+      previous.comments ||
+      [];
+
+    map.set(key, {
       ...previous,
       ...item,
-      likedBy:
-        item.likedBy ||
-        item.liked_by ||
-        previous.likedBy ||
-        previous.liked_by ||
+      id: item.id || previous.id || key,
+      remoteId: item.remoteId || item.remote_id || previous.remoteId || '',
+      playerId: item.playerId || item.player_id || previous.playerId || '',
+      challengeId: item.challengeId || item.challenge_id || previous.challengeId || '',
+      marathonId: item.marathonId || item.marathon_id || previous.marathonId || '',
+      tiktokUrl: item.tiktokUrl || item.tiktok_url || previous.tiktokUrl || '',
+      socialUrl: item.socialUrl || item.social_url || previous.socialUrl || '',
+      externalUrl: item.externalUrl || item.external_url || previous.externalUrl || '',
+      likedBy,
+      votedUserIds:
+        item.votedUserIds ||
+        item.voted_user_ids ||
+        likedBy ||
+        previous.votedUserIds ||
         [],
+      viewedBy,
+      comments,
       votes:
         item.votes ??
         item.likes ??
+        likedBy.length ??
         previous.votes ??
+        0,
+      likes:
+        item.likes ??
+        item.votes ??
+        likedBy.length ??
         previous.likes ??
         0,
+      siteViews:
+        item.siteViews ??
+        item.site_views ??
+        viewedBy.length ??
+        previous.siteViews ??
+        0,
+      siteComments:
+        item.siteComments ??
+        item.site_comments ??
+        comments.length ??
+        previous.siteComments ??
+        0,
+      createdAt:
+        item.createdAt ||
+        item.created_at ||
+        previous.createdAt ||
+        previous.created_at ||
+        new Date().toISOString(),
+      updatedAt:
+        item.updatedAt ||
+        item.updated_at ||
+        previous.updatedAt ||
+        previous.updated_at ||
+        new Date().toISOString(),
     });
   });
 
   return Array.from(map.values()).sort(
     (a, b) => getSubmissionCreatedAt(b) - getSubmissionCreatedAt(a)
   );
+}
+
+function loadLocalSubmissions() {
+  const lists = getSubmissionStorageKeys().map(key =>
+    storageService.loadData<any[]>(key, [])
+  );
+
+  return mergeSubmissions(...lists);
+}
+
+function saveLocalSubmissions(items: any[]) {
+  for (const key of getSubmissionStorageKeys()) {
+    try {
+      storageService.saveData(key, items);
+    } catch (error) {
+      console.warn(`Could not save submissions to ${key}:`, error);
+    }
+  }
+}
+
+function isPublicSubmission(submission: any) {
+  return (
+    submission.visibility === 'public' ||
+    submission.publishToWall === true ||
+    submission.publish_to_wall === true ||
+    submission.isPublic === true ||
+    submission.is_public === true
+  );
+}
+
+function getViewerId(currentUser?: User | null) {
+  if (currentUser?.id) return currentUser.id;
+  return getOrCreateGuestVoterId();
 }
 
 function buildChallengeLookup(marathons: any[]) {
@@ -232,21 +381,17 @@ export default function LandingPage({
   );
 
   const currentFeedSubmissions = useMemo(() => {
-    const localSubmissions = storageService.loadData<any[]>(
-      storageKeys.submissions,
-      []
-    );
+    const localSubmissions = loadLocalSubmissions();
 
     const merged = mergeSubmissions(localSubmissions, submissions || []);
 
     return merged
-      .filter(submission => {
-        const visibility = submission.visibility || submission.status;
-        return visibility === 'public';
-      })
+      .filter(submission => isPublicSubmission(submission))
       .map(submission => {
-        const player = allUsers.find(user => user.id === submission.playerId);
-        const challenge = challengeLookup.get(submission.challengeId);
+        const playerId = submission.playerId || submission.player_id;
+        const challengeId = submission.challengeId || submission.challenge_id;
+        const player = allUsers.find(user => user.id === playerId);
+        const challenge = challengeLookup.get(challengeId);
 
         const playerNickname =
           submission.playerNickname ||
@@ -269,21 +414,53 @@ export default function LandingPage({
             : challenge?.title_en || challenge?.title) ||
           (lang === 'ka' ? 'გამოწვევა' : 'Challenge');
 
+        const likedBy =
+          submission.likedBy ||
+          submission.liked_by ||
+          submission.votedUserIds ||
+          submission.voted_user_ids ||
+          [];
+
+        const viewedBy =
+          submission.viewedBy ||
+          submission.viewed_by ||
+          [];
+
+        const comments = submission.comments || [];
+
         return {
           ...submission,
+          playerId,
+          challengeId,
           playerNickname,
           playerAvatar,
           challengeTitle,
-          likedBy:
-            submission.likedBy ||
-            submission.liked_by ||
+          likedBy,
+          votedUserIds:
             submission.votedUserIds ||
-            [],
+            submission.voted_user_ids ||
+            likedBy,
+          viewedBy,
+          comments,
           votes:
             submission.votes ||
             submission.likes ||
-            submission.likedBy?.length ||
-            submission.liked_by?.length ||
+            likedBy.length ||
+            0,
+          likes:
+            submission.likes ||
+            submission.votes ||
+            likedBy.length ||
+            0,
+          siteViews:
+            submission.siteViews ||
+            submission.site_views ||
+            viewedBy.length ||
+            0,
+          siteComments:
+            submission.siteComments ||
+            submission.site_comments ||
+            comments.length ||
             0,
         };
       });
@@ -337,40 +514,40 @@ export default function LandingPage({
       title: lang === 'ka' ? 'რეგისტრაცია და ნიკნეიმი' : 'Registration',
       desc:
         lang === 'ka'
-          ? 'თამაშში შემოსასვლელად ქმნით ანგარიშს და შეგიძლიათ გამოიყენოთ ნიკნეიმი.'
-          : 'Create an account and use a nickname.',
+          ? 'თამაშში შემოსასვლელად ქმნით ანგარიშს და იყენებთ ნიკნეიმს. გამოწვევის შესრულება დასტურდება TikTok ვიდეოს ბმულით.'
+          : 'Create an account and use a nickname. Challenge completion is confirmed with a TikTok video link.',
       icon: UserPlus,
     },
     {
       title: lang === 'ka' ? 'მონაწილეობის შეთანხმება' : 'Agreement',
       desc:
         lang === 'ka'
-          ? 'რეგისტრაციისას ადასტურებთ, რომ თამაშობთ ნებაყოფლობით.'
-          : 'Confirm that participation is voluntary.',
+          ? 'რეგისტრაციისას ადასტურებთ, რომ თამაშობთ ნებაყოფლობით და იცავთ უსაფრთხო, კანონიერი და ღირსეული მონაწილეობის წესებს.'
+          : 'Confirm that participation is voluntary and follows safe, legal and respectful participation rules.',
       icon: FileText,
     },
     {
       title: lang === 'ka' ? 'ხილვადობა' : 'Visibility',
       desc:
         lang === 'ka'
-          ? 'ყოველი დავალებისას ირჩევთ: საჯარო თუ პირადი.'
-          : 'Choose public or private for each submission.',
+          ? 'შესრულებული დავალება ქვეყნდება TikTok-ზე და საიტზე ჩნდება ბმულის სახით. ქულები ითვლება მხოლოდ საიტის შიდა ნახვებით, გულებით და კომენტარებით.'
+          : 'Completed tasks are published on TikTok and shown on this site as links. Points are calculated only from site views, likes and comments.',
       icon: Eye,
     },
     {
       title: lang === 'ka' ? 'მხარდაჭერა' : 'Support',
       desc:
         lang === 'ka'
-          ? 'საჯარო დავალებაზე მხარდაჭერა ზრდის ავტორის ქულებს.'
-          : 'Supporting public tasks increases the author’s points.',
+          ? 'მხარდაჭერა, უნიკალური ნახვა და კომენტარი ითვლება მხოლოდ ამ საიტზე და ზრდის ავტორის თამაშის ქულებს წესების ფარგლებში.'
+          : 'Support, unique views and comments are counted only on this site and can increase the author’s game points within the rules.',
       icon: Heart,
     },
     {
       title: lang === 'ka' ? 'ლიდერბორდი' : 'Leaderboard',
       desc:
         lang === 'ka'
-          ? 'რეიტინგში ჩანს არჩეული ნიკნეიმი, ავატარი და ქულები.'
-          : 'The leaderboard shows nickname, avatar, and points.',
+          ? 'რეიტინგში ჩანს ნიკნეიმი, ავატარი, ქულები და პროგრესი. გამარჯვებული იღებს ფულად პრიზს; დონაცია რეიტინგზე არ მოქმედებს.'
+          : 'The leaderboard shows nickname, avatar, points and progress. The winner receives a cash prize; donations never affect ranking.',
       icon: Trophy,
     },
   ];
@@ -431,12 +608,88 @@ export default function LandingPage({
     return found?.challenges || [];
   }
 
+  function updateSubmissionLocally(submissionId: string, updater: (item: any) => any) {
+    const localSubmissions = loadLocalSubmissions();
+    const updated = localSubmissions.map(item => {
+      if (item.id !== submissionId && item.remoteId !== submissionId) {
+        return item;
+      }
+
+      return updater(item);
+    });
+
+    saveLocalSubmissions(updated);
+    setTick(value => value + 1);
+  }
+
+  function handleOpenSubmission(submission: any) {
+    const viewerId = getViewerId(currentUser);
+
+    if (viewerId) {
+      updateSubmissionLocally(submission.id, item => {
+        const viewedBy = Array.from(
+          new Set([...(item.viewedBy || item.viewed_by || []), viewerId])
+        );
+
+        return {
+          ...item,
+          viewedBy,
+          siteViews: viewedBy.length,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+    }
+
+    setActiveMediaSub(submission);
+  }
+
   async function handleVoteAction(submission: any) {
     try {
-      getOrCreateGuestVoterId();
+      const voterId = getViewerId(currentUser);
       setVoteMessage('');
 
-      await onVote(submission.id);
+      if (!voterId) {
+        throw new Error(
+          lang === 'ka'
+            ? 'მხარდაჭერისთვის ვერ შეიქმნა მომხმარებლის იდენტიფიკატორი.'
+            : 'Could not create voter id.'
+        );
+      }
+
+      if (submission.playerId === voterId) {
+        throw new Error(
+          lang === 'ka'
+            ? 'საკუთარ შესრულებულ გამოწვევაზე მხარდაჭერა არ ითვლება.'
+            : 'Your own submission cannot receive your vote.'
+        );
+      }
+
+      updateSubmissionLocally(submission.id, item => {
+        const likedBy = Array.from(
+          new Set([
+            ...(item.likedBy || item.liked_by || []),
+            ...(item.votedUserIds || item.voted_user_ids || []),
+            voterId,
+          ])
+        );
+
+        return {
+          ...item,
+          likedBy,
+          votedUserIds: likedBy,
+          votes: likedBy.length,
+          likes: likedBy.length,
+          siteLikes: likedBy.length,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
+      try {
+        await onVote(submission.remoteId || submission.id);
+      } catch (error) {
+        console.warn('Online vote failed, local support kept:', error);
+      }
+
       await onStateUpdate?.();
 
       setVoteMessage(
@@ -444,12 +697,13 @@ export default function LandingPage({
           ? 'მხარდაჭერა დაფიქსირდა.'
           : 'Support has been recorded.'
       );
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
       setVoteMessage(
-        lang === 'ka'
-          ? 'მხარდაჭერა ვერ დაფიქსირდა.'
-          : 'Support could not be recorded.'
+        error?.message ||
+          (lang === 'ka'
+            ? 'მხარდაჭერა ვერ დაფიქსირდა.'
+            : 'Support could not be recorded.')
       );
     }
   }
@@ -479,12 +733,51 @@ export default function LandingPage({
   function renderSubmissionMedia(submission: any, mode: 'card' | 'modal') {
     const url = getSubmissionUrl(submission);
     const mediaType = detectMediaType(submission);
+    const text = getSubmissionText(submission);
+
+    if (mediaType === 'tiktok' && url) {
+      return (
+        <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-slate-950 via-[#111827] to-[#2d0b45] p-6 text-center text-white">
+          <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 text-2xl shadow-lg">
+            🎵
+          </div>
+
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-fuchsia-200">
+            TikTok Proof
+          </p>
+
+          <p className="mt-2 max-w-xs text-xs font-semibold leading-5 text-slate-200">
+            {lang === 'ka'
+              ? 'ვიდეო ატვირთულია TikTok-ზე. გახსენი ბმული და შეაფასე შესრულება საიტზე.'
+              : 'The video is hosted on TikTok. Open the link and support it on this site.'}
+          </p>
+
+          {mode === 'modal' && (
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-5 inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-xs font-black text-[#111827] transition hover:scale-[1.02]"
+            >
+              <ExternalLink className="h-4 w-4" />
+              {lang === 'ka' ? 'TikTok-ზე ნახვა' : 'Open on TikTok'}
+            </a>
+          )}
+
+          {mode === 'card' && (
+            <span className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white">
+              <ExternalLink className="h-3.5 w-3.5" />
+              {lang === 'ka' ? 'გახსნა' : 'Open'}
+            </span>
+          )}
+        </div>
+      );
+    }
 
     if (!url || mediaType === 'text') {
       return (
         <div className="flex h-full w-full items-center justify-center bg-slate-950 p-6 text-center text-xs font-semibold text-slate-300">
-          {getSubmissionText(submission) ||
-            (lang === 'ka' ? 'ტექსტური ჩანაწერი' : 'Text proof')}
+          {text || (lang === 'ka' ? 'ტექსტური ჩანაწერი' : 'Text proof')}
         </div>
       );
     }
@@ -522,6 +815,28 @@ export default function LandingPage({
       );
     }
 
+    if (mediaType === 'link') {
+      return (
+        <div className="flex h-full w-full flex-col items-center justify-center bg-slate-950 p-6 text-center text-white">
+          <ExternalLink className="mb-3 h-8 w-8 text-violet-300" />
+          <p className="text-xs font-bold text-slate-200">
+            {lang === 'ka' ? 'გარე ბმული' : 'External link'}
+          </p>
+
+          {mode === 'modal' && (
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-4 rounded-full bg-white px-5 py-2 text-xs font-black text-slate-950"
+            >
+              {lang === 'ka' ? 'ბმულის გახსნა' : 'Open link'}
+            </a>
+          )}
+        </div>
+      );
+    }
+
     return (
       <video
         src={url}
@@ -538,6 +853,8 @@ export default function LandingPage({
       />
     );
   }
+
+
 
   return (
     <div className="min-h-screen w-full overflow-x-hidden bg-[#04020d] font-sans text-slate-100">
@@ -624,8 +941,8 @@ export default function LandingPage({
 
               <p className="text-xs font-light text-[#5E5878] md:text-sm">
                 {lang === 'ka'
-                  ? 'აქ ჩანს მხოლოდ ის შესრულებული გამოწვევები, რომელთა გასაჯაროებაზეც მოთამაშემ თანხმობა მისცა.'
-                  : 'Only submissions marked public by players appear here.'}
+                  ? 'აქ ჩანს TikTok-ზე შესრულებული გამოწვევების ბმულები. ქულები ითვლება მხოლოდ საიტზე მიღებული უნიკალური ნახვებით, გულებით და კომენტარებით.'
+                  : 'TikTok challenge links appear here. Points are counted only from unique site views, likes and comments.'}
               </p>
 
               {voteMessage && (
@@ -645,8 +962,8 @@ export default function LandingPage({
 
                 <p className="mt-2 text-xs font-medium text-[#5E5878]">
                   {lang === 'ka'
-                    ? 'როცა მოთამაშე დავალებას საჯაროდ ატვირთავს, ის აქ გამოჩნდება.'
-                    : 'When a player uploads a public proof, it will appear here.'}
+                    ? 'როცა მოთამაშე TikTok ბმულს ჩასვამს, შესრულებული გამოწვევა აქ გამოჩნდება.'
+                    : 'When a player submits a TikTok link, the completed challenge will appear here.'}
                 </p>
               </div>
             ) : (
@@ -664,7 +981,7 @@ export default function LandingPage({
                   return (
                     <div
                       key={sub.id}
-                      onClick={() => setActiveMediaSub(sub)}
+                      onClick={() => handleOpenSubmission(sub)}
                       className="group relative flex cursor-pointer flex-col overflow-hidden rounded-[24px] border border-[#E8E2F1] bg-white transition-all duration-300 hover:shadow-xl"
                     >
                       <div className="relative aspect-video select-none overflow-hidden bg-slate-950">
@@ -701,6 +1018,18 @@ export default function LandingPage({
                                 ? 'მოთამაშემ გამოწვევა საჯაროდ შეასრულა.'
                                 : 'The player completed this challenge publicly.')}
                           </p>
+
+                          <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[10px] font-black text-[#5E5878]">
+                            <div className="rounded-xl bg-[#F7F3FF] px-2 py-2">
+                              👁 {sub.siteViews || sub.viewedBy?.length || 0}
+                            </div>
+                            <div className="rounded-xl bg-[#FFF0F6] px-2 py-2">
+                              ❤️ {sub.siteLikes || sub.likedBy?.length || sub.votes || 0}
+                            </div>
+                            <div className="rounded-xl bg-[#EAF8F2] px-2 py-2">
+                              💬 {sub.siteComments || sub.comments?.length || 0}
+                            </div>
+                          </div>
                         </div>
 
                         <div
@@ -966,6 +1295,8 @@ export default function LandingPage({
           const likedBy = liveActiveSub.likedBy || [];
           const hasLiked = Boolean(voterId && likedBy.includes(voterId));
           const voteCount = likedBy.length || liveActiveSub.votes || 0;
+          const viewCount = liveActiveSub.siteViews || liveActiveSub.viewedBy?.length || 0;
+          const commentCount = liveActiveSub.siteComments || liveActiveSub.comments?.length || 0;
 
           return (
             <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
@@ -1017,6 +1348,30 @@ export default function LandingPage({
                       ? 'კომენტარი არ არის დამატებული.'
                       : 'No comment added.')}
                 </div>
+
+                <div className="grid grid-cols-3 gap-2 text-center text-[11px] font-black text-[#27213F]">
+                  <div className="rounded-xl bg-[#F7F3FF] p-2">
+                    👁 {viewCount} {lang === 'ka' ? 'ნახვა' : 'views'}
+                  </div>
+                  <div className="rounded-xl bg-[#FFF0F6] p-2">
+                    ❤️ {voteCount} {lang === 'ka' ? 'გული' : 'likes'}
+                  </div>
+                  <div className="rounded-xl bg-[#EAF8F2] p-2">
+                    💬 {commentCount} {lang === 'ka' ? 'კომ.' : 'comments'}
+                  </div>
+                </div>
+
+                {getSubmissionUrl(liveActiveSub) && isTikTokSubmission(liveActiveSub) && (
+                  <a
+                    href={getSubmissionUrl(liveActiveSub)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 py-2.5 text-xs font-black text-white transition-all hover:bg-black"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    {lang === 'ka' ? 'TikTok ვიდეოს გახსნა' : 'Open TikTok video'}
+                  </a>
+                )}
 
                 <div className="flex items-center justify-between border-t border-[#E8E2F1] pt-3 text-xs">
                   <button
