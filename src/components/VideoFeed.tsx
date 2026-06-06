@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Heart, Lock, Volume2, X } from 'lucide-react';
+import { ExternalLink, Eye, Heart, MessageCircle, Music2, X } from 'lucide-react';
 
 import { Submission, User } from '../types';
 import { submissionService } from '../services/submissionService';
@@ -13,41 +13,82 @@ interface VideoFeedProps {
 }
 
 const EXTRA_SUBMISSIONS_KEY = 'bifurcation_submissions';
+const LEGACY_SUBMISSIONS_KEY = 'submissions';
+const GUEST_VIEWER_KEY = 'bifurcation_guest_viewer_id';
+const GUEST_VOTER_KEY = 'bifurcation_guest_voter_id';
 
 function getSubmissionStorageKeys() {
   return Array.from(
     new Set(
-      [storageKeys.submissions, EXTRA_SUBMISSIONS_KEY].filter(
+      [storageKeys.submissions, EXTRA_SUBMISSIONS_KEY, LEGACY_SUBMISSIONS_KEY].filter(
         (key): key is string => Boolean(key)
       )
     )
   );
 }
 
-function getOrCreateGuestVoterId() {
+function getOrCreateGuestId(key: string, prefix: string) {
   if (typeof window === 'undefined') return '';
 
-  const existing = localStorage.getItem('bifurcation_guest_voter_id');
+  const existing = localStorage.getItem(key);
 
   if (existing) return existing;
 
-  const created = `guest-voter-${Date.now()}-${Math.random()
+  const created = `${prefix}-${Date.now()}-${Math.random()
     .toString(36)
     .slice(2, 10)}`;
 
-  localStorage.setItem('bifurcation_guest_voter_id', created);
+  localStorage.setItem(key, created);
 
   return created;
 }
 
-function getMediaUrl(submission: any) {
+function getOrCreateGuestVoterId() {
+  return getOrCreateGuestId(GUEST_VOTER_KEY, 'guest-voter');
+}
+
+function getOrCreateGuestViewerId() {
+  return getOrCreateGuestId(GUEST_VIEWER_KEY, 'guest-viewer');
+}
+
+function safeLoadArray(key: string) {
+  try {
+    return storageService.loadData<any[]>(key, []);
+  } catch {
+    try {
+      return JSON.parse(localStorage.getItem(key) || '[]');
+    } catch {
+      return [];
+    }
+  }
+}
+
+function safeSaveArray(key: string, value: any[]) {
+  try {
+    storageService.saveData(key, value);
+  } catch {
+    // ignore storageService failure
+  }
+
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore localStorage failure
+  }
+}
+
+function getSocialUrl(submission: any) {
   return (
+    submission.tiktokUrl ||
+    submission.tiktok_url ||
+    submission.socialUrl ||
+    submission.social_url ||
+    submission.externalUrl ||
+    submission.external_url ||
     submission.fileUrl ||
     submission.videoUrl ||
-    submission.localPreviewUrl ||
     submission.file_url ||
     submission.video_url ||
-    submission.local_preview_url ||
     ''
   );
 }
@@ -74,7 +115,7 @@ function getCreatedTime(submission: any) {
   ).getTime();
 }
 
-function getSubmissionUniqueKey(submission: any) {
+function getSubmissionKey(submission: any) {
   return (
     submission.id ||
     submission.remoteId ||
@@ -85,37 +126,15 @@ function getSubmissionUniqueKey(submission: any) {
   );
 }
 
-function detectMediaType(submission: any) {
-  const type = submission.submissionType || submission.submission_type || '';
-  const url = getMediaUrl(submission);
-
-  if (
-    type === 'photo' ||
-    url.startsWith('data:image/') ||
-    url.match(/\.(jpeg|jpg|gif|png|webp|svg|heic|heif)($|\?)/i)
-  ) {
-    return 'photo';
-  }
-
-  if (
-    type === 'audio' ||
-    url.startsWith('data:audio/') ||
-    url.match(/\.(mp3|wav|ogg|aac|m4a|mpeg)($|\?)/i)
-  ) {
-    return 'audio';
-  }
-
-  if (
-    type === 'video' ||
-    url.startsWith('data:video/') ||
-    url.match(/\.(mp4|webm|mov|m4v|quicktime)($|\?)/i)
-  ) {
-    return 'video';
-  }
-
-  if (!url) return 'text';
-
-  return 'video';
+function isPublicSubmission(submission: any) {
+  return (
+    submission.visibility === 'public' ||
+    submission.publishToWall === true ||
+    submission.publish_to_wall === true ||
+    submission.isPublic === true ||
+    submission.is_public === true ||
+    submission.status === 'completed'
+  );
 }
 
 function mergeSubmissions(...lists: any[][]) {
@@ -124,37 +143,36 @@ function mergeSubmissions(...lists: any[][]) {
   lists.flat().forEach(item => {
     if (!item) return;
 
-    const key = getSubmissionUniqueKey(item);
+    const key = getSubmissionKey(item);
     const previous = map.get(key) || {};
 
-    const likedBy =
-      item.likedBy ||
-      item.liked_by ||
-      item.votedUserIds ||
-      item.voted_user_ids ||
-      previous.likedBy ||
-      previous.liked_by ||
-      previous.votedUserIds ||
-      previous.voted_user_ids ||
-      [];
+    const likedBy = Array.from(
+      new Set([
+        ...(previous.likedBy || []),
+        ...(previous.votedUserIds || []),
+        ...(item.likedBy || []),
+        ...(item.liked_by || []),
+        ...(item.votedUserIds || []),
+        ...(item.voted_user_ids || []),
+      ])
+    );
 
-    const votedUserIds =
-      item.votedUserIds ||
-      item.voted_user_ids ||
-      item.likedBy ||
-      item.liked_by ||
-      previous.votedUserIds ||
-      previous.voted_user_ids ||
-      previous.likedBy ||
-      previous.liked_by ||
-      [];
+    const viewedBy = Array.from(
+      new Set([
+        ...(previous.viewedBy || []),
+        ...(previous.viewed_by || []),
+        ...(item.viewedBy || []),
+        ...(item.viewed_by || []),
+      ])
+    );
+
+    const comments = item.comments || previous.comments || [];
 
     map.set(key, {
       ...previous,
       ...item,
 
       id: item.id || previous.id || key,
-      remoteId: item.remoteId || item.remote_id || previous.remoteId || '',
 
       playerId: item.playerId || item.player_id || previous.playerId || '',
       challengeId:
@@ -165,7 +183,43 @@ function mergeSubmissions(...lists: any[][]) {
         item.submissionType ||
         item.submission_type ||
         previous.submissionType ||
-        'text',
+        'tiktok',
+
+      socialPlatform:
+        item.socialPlatform ||
+        item.social_platform ||
+        previous.socialPlatform ||
+        'tiktok',
+
+      socialUrl:
+        item.socialUrl ||
+        item.social_url ||
+        item.tiktokUrl ||
+        item.tiktok_url ||
+        item.externalUrl ||
+        item.external_url ||
+        previous.socialUrl ||
+        '',
+
+      tiktokUrl:
+        item.tiktokUrl ||
+        item.tiktok_url ||
+        item.socialUrl ||
+        item.social_url ||
+        item.externalUrl ||
+        item.external_url ||
+        previous.tiktokUrl ||
+        '',
+
+      externalUrl:
+        item.externalUrl ||
+        item.external_url ||
+        item.tiktokUrl ||
+        item.tiktok_url ||
+        item.socialUrl ||
+        item.social_url ||
+        previous.externalUrl ||
+        '',
 
       visibility: item.visibility || previous.visibility || 'public',
       publishToWall:
@@ -173,19 +227,19 @@ function mergeSubmissions(...lists: any[][]) {
         item.publish_to_wall ??
         previous.publishToWall ??
         previous.publish_to_wall ??
-        false,
+        true,
       publish_to_wall:
         item.publish_to_wall ??
         item.publishToWall ??
         previous.publish_to_wall ??
         previous.publishToWall ??
-        false,
+        true,
       isPublic:
         item.isPublic ??
         item.is_public ??
         previous.isPublic ??
         previous.is_public ??
-        false,
+        true,
 
       approved:
         item.approved ??
@@ -197,10 +251,31 @@ function mergeSubmissions(...lists: any[][]) {
       status: item.status || previous.status || 'completed',
 
       likedBy,
-      votedUserIds,
+      votedUserIds: likedBy,
+      viewedBy,
+      comments,
 
       votes: item.votes ?? item.likes ?? likedBy.length ?? previous.votes ?? 0,
       likes: item.likes ?? item.votes ?? likedBy.length ?? previous.likes ?? 0,
+
+      siteViews:
+        item.siteViews ??
+        item.site_views ??
+        viewedBy.length ??
+        previous.siteViews ??
+        0,
+      siteLikes:
+        item.siteLikes ??
+        item.site_likes ??
+        likedBy.length ??
+        previous.siteLikes ??
+        0,
+      siteComments:
+        item.siteComments ??
+        item.site_comments ??
+        comments.length ??
+        previous.siteComments ??
+        0,
 
       createdAt:
         item.createdAt ||
@@ -224,20 +299,15 @@ function mergeSubmissions(...lists: any[][]) {
 }
 
 function loadLocalSubmissions() {
-  const lists = getSubmissionStorageKeys().map(key =>
-    storageService.loadData<any[]>(key, [])
-  );
-
+  const lists = getSubmissionStorageKeys().map(key => safeLoadArray(key));
   return mergeSubmissions(...lists);
 }
 
-function saveLocalSubmissions(submissions: any[]) {
+function saveLocalSubmissions(items: any[]) {
+  const merged = mergeSubmissions(items);
+
   for (const key of getSubmissionStorageKeys()) {
-    try {
-      storageService.saveData(key, submissions);
-    } catch (error) {
-      console.warn(`Could not save submissions to ${key}:`, error);
-    }
+    safeSaveArray(key, merged);
   }
 }
 
@@ -258,38 +328,38 @@ function buildChallengeLookup(marathons: any[]) {
   return map;
 }
 
-function isPublicSubmission(submission: any) {
-  return (
-    submission.visibility === 'public' ||
-    submission.publishToWall === true ||
-    submission.publish_to_wall === true ||
-    submission.isPublic === true ||
-    submission.is_public === true
-  );
+function extractTikTokVideoId(url: string) {
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(/\/video\/(\d+)/);
+
+    return match?.[1] || '';
+  } catch {
+    const match = url.match(/\/video\/(\d+)/);
+    return match?.[1] || '';
+  }
 }
 
-function updateLocalLike(submissionId: string, voterId: string) {
-  const localSubmissions = loadLocalSubmissions();
+function normalizeTikTokUrl(url: string) {
+  return url.split('?')[0];
+}
 
-  const updated = localSubmissions.map(submission => {
-    if (submission.id !== submissionId && submission.remoteId !== submissionId) {
-      return submission;
-    }
+function recordViewLocally(submissionId: string, viewerId: string) {
+  if (!submissionId || !viewerId) return;
 
-    const likedBy = Array.from(
-      new Set([
-        ...(submission.likedBy || []),
-        ...(submission.votedUserIds || []),
-        voterId,
-      ])
+  const submissions = loadLocalSubmissions();
+
+  const updated = submissions.map(submission => {
+    if (submission.id !== submissionId) return submission;
+
+    const viewedBy = Array.from(
+      new Set([...(submission.viewedBy || []), viewerId])
     );
 
     return {
       ...submission,
-      likedBy,
-      votedUserIds: likedBy,
-      votes: likedBy.length,
-      likes: likedBy.length,
+      viewedBy,
+      siteViews: viewedBy.length,
       updatedAt: new Date().toISOString(),
     };
   });
@@ -319,8 +389,8 @@ export default function VideoFeed({
 
       const localUsers = [
         ...storageService.loadData<User[]>(storageKeys.users, []),
-        ...storageService.loadData<User[]>((storageKeys as any).players, []),
-      ];
+        ...storageService.loadData<User[]>((storageKeys as any).players || '', []),
+      ].filter(Boolean);
 
       const localCurrentUser = storageService.loadData<User | null>(
         storageKeys.currentUser,
@@ -332,17 +402,6 @@ export default function VideoFeed({
         []
       );
 
-      let onlineSubmissions: Submission[] = [];
-
-      try {
-        onlineSubmissions = await submissionService.getSubmissions();
-      } catch (error) {
-        console.warn('Online submissions failed, using local only:', error);
-      }
-
-      const merged = mergeSubmissions(localSubmissions, onlineSubmissions);
-      saveLocalSubmissions(merged);
-
       const challengeLookup = buildChallengeLookup(localMarathons);
 
       const allUsers = [
@@ -351,7 +410,7 @@ export default function VideoFeed({
         ...(currentUser ? [currentUser] : []),
       ];
 
-      const publicSubmissions = merged
+      const publicSubmissions = localSubmissions
         .filter(submission => isPublicSubmission(submission))
         .map(submission => {
           const playerId = submission.playerId || submission.player_id;
@@ -381,13 +440,6 @@ export default function VideoFeed({
               : challenge?.title_en || challenge?.title) ||
             (lang === 'ka' ? 'გამოწვევა' : 'Challenge');
 
-          const likedBy =
-            submission.likedBy ||
-            submission.liked_by ||
-            submission.votedUserIds ||
-            submission.voted_user_ids ||
-            [];
-
           return {
             ...submission,
             playerId,
@@ -395,22 +447,6 @@ export default function VideoFeed({
             playerNickname,
             playerAvatar,
             challengeTitle,
-            likedBy,
-            votedUserIds:
-              submission.votedUserIds ||
-              submission.voted_user_ids ||
-              likedBy ||
-              [],
-            votes:
-              submission.votes ||
-              submission.likes ||
-              likedBy.length ||
-              0,
-            likes:
-              submission.likes ||
-              submission.votes ||
-              likedBy.length ||
-              0,
           };
         });
 
@@ -430,12 +466,32 @@ export default function VideoFeed({
   useEffect(() => {
     loadPublicSubmissions();
 
-    const unsubscribe = storageService.subscribe(() => {
-      loadPublicSubmissions();
-    });
+    const onFocus = () => loadPublicSubmissions();
+    window.addEventListener('focus', onFocus);
 
-    return unsubscribe;
+    return () => {
+      window.removeEventListener('focus', onFocus);
+    };
   }, [currentUser?.id]);
+
+  function openSubmission(submission: any) {
+    const viewerId = currentUser?.id || getOrCreateGuestViewerId();
+
+    recordViewLocally(submission.id, viewerId);
+
+    const updatedSubmissions = loadLocalSubmissions();
+    const freshSubmission =
+      updatedSubmissions.find(item => item.id === submission.id) || submission;
+
+    setSubmissions(prev =>
+      prev.map(item => (item.id === freshSubmission.id ? freshSubmission : item))
+    );
+
+    setFullscreenSubmission({
+      ...submission,
+      ...freshSubmission,
+    });
+  }
 
   async function handleLike(submission: any) {
     try {
@@ -471,25 +527,12 @@ export default function VideoFeed({
         );
       }
 
-      updateLocalLike(submission.id, voterId);
-
-      try {
-        await submissionService.voteSubmission(
-          submission.remoteId || submission.id,
-          voterId
-        );
-      } catch (error) {
-        console.warn('Online vote failed, local vote kept:', error);
-      }
+      await submissionService.voteSubmission(submission.id, voterId);
 
       await loadPublicSubmissions();
       await onStateUpdate();
 
-      setInfoMessage(
-        lang === 'ka'
-          ? 'მხარდაჭერა დაფიქსირდა.'
-          : 'Support recorded.'
-      );
+      setInfoMessage(lang === 'ka' ? 'მხარდაჭერა დაფიქსირდა.' : 'Support recorded.');
     } catch (error: any) {
       console.error('Like error:', error);
       setErrorMessage(
@@ -503,103 +546,64 @@ export default function VideoFeed({
     }
   }
 
-  function renderMediaPreview(submission: any) {
-    const url = getMediaUrl(submission);
-    const type = detectMediaType(submission);
-
-    if (!url && !getSubmissionText(submission)) {
-      return (
-        <div className="flex h-40 items-center justify-center rounded-xl bg-slate-100 text-slate-400">
-          <Lock className="mr-2 h-5 w-5" />
-          <span className="text-xs font-bold">
-            {lang === 'ka' ? 'მედია არ არის' : 'No media'}
-          </span>
-        </div>
-      );
-    }
-
-    if (type === 'photo' && url) {
-      return (
-        <img
-          src={url}
-          className="h-40 w-full rounded-xl object-cover"
-          alt={lang === 'ka' ? 'აქტივობის ფოტო' : 'Submission photo'}
-          referrerPolicy="no-referrer"
-        />
-      );
-    }
-
-    if (type === 'video' && url) {
-      return (
-        <video
-          src={url}
-          className="h-40 w-full rounded-xl bg-black object-cover"
-          muted
-          playsInline
-          loop
-        />
-      );
-    }
-
-    if (type === 'audio' && url) {
-      return (
-        <div className="flex h-40 flex-col items-center justify-center rounded-xl bg-slate-950 text-white">
-          <Volume2 className="mb-2 h-8 w-8 animate-pulse text-violet-300" />
-          <span className="text-xs font-bold">
-            {lang === 'ka' ? 'აუდიო აქტივობა' : 'Audio submission'}
-          </span>
-        </div>
-      );
-    }
-
+  function renderTikTokCard(submission: any) {
     return (
-      <div className="flex h-40 items-center justify-center rounded-xl bg-violet-50 p-4 text-center text-xs font-bold leading-6 text-violet-700">
-        {getSubmissionText(submission) ||
-          (lang === 'ka' ? 'ტექსტური აქტივობა' : 'Text submission')}
+      <div className="flex h-44 w-full flex-col items-center justify-center rounded-xl bg-gradient-to-br from-slate-950 via-slate-900 to-violet-950 p-5 text-center text-white">
+        <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10">
+          <Music2 className="h-6 w-6 text-violet-200" />
+        </div>
+
+        <p className="text-[10px] font-black uppercase tracking-[0.28em] text-violet-200">
+          TikTok Proof
+        </p>
+
+        <p className="mt-2 max-w-[220px] text-xs font-bold leading-5 text-white">
+          {lang === 'ka'
+            ? 'ვიდეო ატვირთულია TikTok-ზე. გასახსნელად დააჭირეთ.'
+            : 'The video is hosted on TikTok. Tap to open.'}
+        </p>
       </div>
     );
   }
 
-  function renderFullscreenMedia(submission: any) {
-    const url = getMediaUrl(submission);
-    const type = detectMediaType(submission);
+  function renderFullscreenTikTok(submission: any) {
+    const url = getSocialUrl(submission);
+    const cleanUrl = normalizeTikTokUrl(url);
+    const videoId = extractTikTokVideoId(cleanUrl);
 
-    if (type === 'photo' && url) {
+    if (videoId) {
       return (
-        <img
-          src={url}
-          className="mx-auto max-h-[70vh] w-full rounded-2xl border border-white/10 bg-black object-contain"
-          alt={lang === 'ka' ? 'აქტივობის ფოტო' : 'Submission photo'}
-          referrerPolicy="no-referrer"
-        />
-      );
-    }
-
-    if (type === 'audio' && url) {
-      return (
-        <div className="w-full rounded-2xl border border-white/10 bg-zinc-900 p-8 text-center">
-          <Volume2 className="mx-auto mb-4 h-12 w-12 animate-pulse text-violet-300" />
-          <audio src={url} controls autoPlay className="mt-4 w-full" />
+        <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-black">
+          <iframe
+            src={`https://www.tiktok.com/embed/v2/${videoId}`}
+            title="TikTok video"
+            allow="fullscreen"
+            className="h-[620px] w-full border-0 bg-black"
+          />
         </div>
       );
     }
 
-    if (type === 'video' && url) {
-      return (
-        <video
-          src={url}
-          controls
-          autoPlay
-          playsInline
-          className="max-h-[70vh] w-full rounded-2xl border border-white/10 bg-black"
-        />
-      );
-    }
-
     return (
-      <div className="rounded-2xl border border-white/10 bg-zinc-900 p-8 text-left text-sm leading-7 text-white">
-        {getSubmissionText(submission) ||
-          (lang === 'ka' ? 'ტექსტი არ არის დამატებული.' : 'No text added.')}
+      <div className="rounded-2xl border border-white/10 bg-zinc-900 p-8 text-center">
+        <Music2 className="mx-auto mb-3 h-10 w-10 text-violet-300" />
+        <p className="text-sm font-bold text-white">
+          {lang === 'ka'
+            ? 'ამ TikTok ბმულის საიტში ჩასმა ვერ მოხერხდა.'
+            : 'Could not embed this TikTok link.'}
+        </p>
+
+        {url && (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-xs font-black text-slate-950"
+          >
+            <ExternalLink className="h-4 w-4" />
+            {lang === 'ka' ? 'TikTok-ზე ნახვა' : 'Open on TikTok'}
+          </a>
+        )}
       </div>
     );
   }
@@ -615,8 +619,8 @@ export default function VideoFeed({
 
         <p className="mt-0.5 text-xs text-slate-500">
           {lang === 'ka'
-            ? 'აქ გამოჩნდება მონაწილეების მიერ მთავარ გვერდზე გამოსაქვეყნებლად დადასტურებული ფოტო, ვიდეო, აუდიო და ტექსტური აქტივობები.'
-            : 'Public photos, videos, audio and text proofs approved for the wall appear here.'}
+            ? 'აქ გამოჩნდება TikTok-ზე შესრულებული და საიტზე დადასტურებული გამოწვევები.'
+            : 'TikTok proofs submitted and confirmed on the website appear here.'}
         </p>
       </div>
 
@@ -648,20 +652,25 @@ export default function VideoFeed({
             const voterId =
               currentUser?.id ||
               (typeof window !== 'undefined'
-                ? localStorage.getItem('bifurcation_guest_voter_id')
+                ? localStorage.getItem(GUEST_VOTER_KEY)
                 : '');
 
             const likedBy = submission.likedBy || submission.votedUserIds || [];
+            const viewedBy = submission.viewedBy || [];
+            const comments = submission.comments || [];
+
             const alreadyLiked = Boolean(voterId && likedBy.includes(voterId));
             const isOwnSubmission =
               Boolean(currentUser?.id) && submission.playerId === currentUser?.id;
-            const likeCount =
-              likedBy.length || submission.likes || submission.votes || 0;
+
+            const likeCount = likedBy.length || submission.likes || submission.votes || 0;
+            const viewCount = viewedBy.length || submission.siteViews || 0;
+            const commentCount = comments.length || submission.siteComments || 0;
 
             return (
               <div
                 key={submission.id}
-                className="space-y-3 rounded-2xl border bg-white p-4 shadow-xs"
+                className="space-y-3 rounded-2xl border bg-white p-4 shadow-sm"
               >
                 <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
                   <img
@@ -678,17 +687,17 @@ export default function VideoFeed({
 
                 <button
                   type="button"
-                  onClick={() => setFullscreenSubmission(submission)}
+                  onClick={() => openSubmission(submission)}
                   className="relative block w-full cursor-pointer overflow-hidden rounded-xl bg-black text-left"
                 >
-                  {renderMediaPreview(submission)}
+                  {renderTikTokCard(submission)}
 
                   <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 text-xs font-black text-white opacity-0 transition-opacity hover:opacity-100">
                     ▶ {lang === 'ka' ? 'ნახვა' : 'Open'}
                   </div>
                 </button>
 
-                <h4 className="truncate text-xs font-black text-[#27213F]">
+                <h4 className="line-clamp-2 text-xs font-black text-[#27213F]">
                   {submission.challengeTitle ||
                     (lang === 'ka' ? 'გამოწვევა' : 'Challenge')}
                 </h4>
@@ -698,6 +707,23 @@ export default function VideoFeed({
                     “{getSubmissionText(submission)}”
                   </p>
                 )}
+
+                <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-black">
+                  <div className="rounded-xl bg-violet-50 px-2 py-2 text-violet-700">
+                    <Eye className="mx-auto mb-1 h-3.5 w-3.5" />
+                    {viewCount}
+                  </div>
+
+                  <div className="rounded-xl bg-rose-50 px-2 py-2 text-rose-600">
+                    <Heart className="mx-auto mb-1 h-3.5 w-3.5" />
+                    {likeCount}
+                  </div>
+
+                  <div className="rounded-xl bg-emerald-50 px-2 py-2 text-emerald-700">
+                    <MessageCircle className="mx-auto mb-1 h-3.5 w-3.5" />
+                    {commentCount}
+                  </div>
+                </div>
 
                 <div className="flex items-center justify-between border-t pt-2">
                   <button
@@ -722,19 +748,15 @@ export default function VideoFeed({
                     {likeCount} {lang === 'ka' ? 'გული' : 'Likes'}
                   </button>
 
-                  <span className="font-mono text-[9px] text-slate-400">
-                    {isOwnSubmission
-                      ? lang === 'ka'
-                        ? 'საკუთარზე არა'
-                        : 'Own post'
-                      : alreadyLiked
-                        ? lang === 'ka'
-                          ? 'უკვე დაგულებულია'
-                          : 'Liked'
-                        : currentUser
-                          ? '+2 / ავტორს +5'
-                          : 'ავტორს +5'}
-                  </span>
+                  <a
+                    href={getSocialUrl(submission)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 rounded-lg bg-slate-950 px-3 py-1 text-[10px] font-black text-white"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    TikTok
+                  </a>
                 </div>
               </div>
             );
@@ -743,7 +765,7 @@ export default function VideoFeed({
       )}
 
       {fullscreenSubmission && (
-        <div className="fixed inset-0 z-[55] flex flex-col items-center justify-center bg-black/90 p-4 text-white backdrop-blur-sm">
+        <div className="fixed inset-0 z-[55] flex flex-col items-center justify-center overflow-y-auto bg-black/90 p-4 text-white backdrop-blur-sm">
           <div className="w-full max-w-2xl space-y-4 text-center">
             <div className="rounded-2xl border border-white/10 bg-zinc-950 p-4 text-left">
               <p className="text-xs font-bold text-violet-300">
@@ -756,13 +778,27 @@ export default function VideoFeed({
               </h4>
             </div>
 
-            {renderFullscreenMedia(fullscreenSubmission)}
+            {renderFullscreenTikTok(fullscreenSubmission)}
 
             {getSubmissionText(fullscreenSubmission) && (
               <div className="rounded-2xl border border-white/10 bg-zinc-900 p-4 text-left text-xs leading-6 text-slate-200">
                 {getSubmissionText(fullscreenSubmission)}
               </div>
             )}
+
+            <div className="grid grid-cols-3 gap-2 text-center text-xs font-black">
+              <div className="rounded-xl bg-white/10 p-3">
+                👁 {fullscreenSubmission.viewedBy?.length || fullscreenSubmission.siteViews || 0}
+              </div>
+
+              <div className="rounded-xl bg-white/10 p-3">
+                ❤️ {fullscreenSubmission.likedBy?.length || fullscreenSubmission.likes || 0}
+              </div>
+
+              <div className="rounded-xl bg-white/10 p-3">
+                💬 {fullscreenSubmission.comments?.length || fullscreenSubmission.siteComments || 0}
+              </div>
+            </div>
 
             <button
               type="button"
