@@ -16,6 +16,10 @@ const MAX_COMMENT_BONUS_PER_SUBMISSION =
   (POINTS_CONFIG as any).maxCommentBonusPerSubmission ?? 45;
 
 let hasAttemptedInitialCloudSync = false;
+let cloudSubmissionsCache: any[] = [];
+let cloudSubmissionsFetchedAt = 0;
+let cloudSubmissionsInFlight: Promise<any[]> | null = null;
+const CLOUD_FETCH_TTL_MS = 12000;
 
 type StoredComment = {
   id: string;
@@ -338,16 +342,15 @@ function loadAllLocalSubmissions() {
 
 function saveAllLocalSubmissions(items: any[]) {
   const merged = mergeSubmissions(items);
+  const serialized = JSON.stringify(merged);
 
   for (const key of getSubmissionStorageKeys()) {
     try {
-      storageService.saveData(key, merged);
-    } catch (error) {
-      console.warn(`storageService save failed for ${key}:`, error);
-    }
-
-    try {
-      localStorage.setItem(key, JSON.stringify(merged));
+      if (typeof window !== 'undefined' && localStorage.getItem(key) !== serialized) {
+        // Silent local cache write: no custom storage event.
+        // This prevents App/PlayerCabinet from entering a fetch → save → refresh → fetch loop.
+        localStorage.setItem(key, serialized);
+      }
     } catch (error) {
       console.warn(`localStorage save failed for ${key}:`, error);
     }
@@ -430,20 +433,39 @@ function mapSubmissionToRow(submission: any) {
 }
 
 async function fetchCloudSubmissions() {
-  try {
-    const { data, error } = await supabase
-      .from('submissions')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(300);
+  const now = Date.now();
 
-    if (error) throw error;
-
-    return (data || []).map(mapRowToSubmission);
-  } catch (error) {
-    console.warn('Supabase submissions load failed. Using local fallback:', error);
-    return [];
+  if (cloudSubmissionsCache.length && now - cloudSubmissionsFetchedAt < CLOUD_FETCH_TTL_MS) {
+    return cloudSubmissionsCache;
   }
+
+  if (cloudSubmissionsInFlight) {
+    return cloudSubmissionsInFlight;
+  }
+
+  cloudSubmissionsInFlight = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from('submissions')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(300);
+
+      if (error) throw error;
+
+      cloudSubmissionsCache = (data || []).map(mapRowToSubmission);
+      cloudSubmissionsFetchedAt = Date.now();
+
+      return cloudSubmissionsCache;
+    } catch (error) {
+      console.warn('Supabase submissions load failed. Using local fallback:', error);
+      return cloudSubmissionsCache;
+    } finally {
+      cloudSubmissionsInFlight = null;
+    }
+  })();
+
+  return cloudSubmissionsInFlight;
 }
 
 function formatSupabaseError(error: any) {
@@ -515,7 +537,10 @@ async function upsertCloudSubmission(submission: any) {
 
       try {
         const data = await insertOrUpdateSubmissionRow(row);
-        return data ? mapRowToSubmission(data) : submission;
+        const saved = data ? mapRowToSubmission(data) : submission;
+        cloudSubmissionsCache = mergeSubmissions([saved], cloudSubmissionsCache);
+        cloudSubmissionsFetchedAt = Date.now();
+        return saved;
       } catch (secondError: any) {
         throw new Error(formatSupabaseError(secondError));
       }
@@ -665,21 +690,9 @@ export const submissionService = {
   async getSubmissions(): Promise<Submission[]> {
     const localSubmissions = loadAllLocalSubmissions();
 
-    // პირველად ჩატვირთვისას ვცდილობთ ძველი localStorage ჩანაწერების cloud-ში ატვირთვას.
-    // ასე კომპიუტერში შექმნილი ჩანაწერები გამოჩნდება მობილურშიც, თუ მოთამაშე უკვე cloud ანგარიშით მუშაობს.
-    if (!hasAttemptedInitialCloudSync && localSubmissions.length > 0) {
-      hasAttemptedInitialCloudSync = true;
-
-      for (const submission of localSubmissions.slice(0, 100)) {
-        if (!isUuid(submission.playerId || submission.userId)) continue;
-
-        try {
-          await upsertCloudSubmission(submission);
-        } catch (error) {
-          console.warn('Local submission could not be synced to cloud:', error);
-        }
-      }
-    }
+    // Important: do not auto-upload every local item on page load.
+    // Auto-syncing many old localStorage rows can create a request storm in the browser.
+    hasAttemptedInitialCloudSync = true;
 
     const cloudSubmissions = await fetchCloudSubmissions();
     const merged = mergeSubmissions(cloudSubmissions, localSubmissions);
