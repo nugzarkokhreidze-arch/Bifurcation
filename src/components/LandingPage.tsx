@@ -813,10 +813,19 @@ export default function LandingPage({
             </span>
           </div>
 
-          <h1 className="text-[2.6rem] font-black leading-[0.95] tracking-tight sm:text-6xl md:text-7xl lg:text-8xl">
-            <span className="bg-gradient-to-r from-violet-500 via-fuchsia-500 to-amber-500 bg-clip-text font-extrabold text-transparent drop-shadow-[0_0_15px_rgba(167,139,250,0.25)]">
+          <h1 className="relative inline-flex max-w-full items-center overflow-visible py-2">
+            <span
+              className="relative z-10 whitespace-nowrap bg-gradient-to-r from-violet-500 via-fuchsia-500 to-amber-500 bg-clip-text text-[clamp(2.35rem,10vw,7.25rem)] font-black leading-none tracking-[-0.07em] text-transparent drop-shadow-[0_0_18px_rgba(167,139,250,0.32)]"
+              style={{
+                fontFamily:
+                  '"Noto Sans Georgian", "BPG Nino Mtavruli", "Arial Rounded MT Bold", system-ui, sans-serif',
+                textShadow: '0 0 34px rgba(168,85,247,0.22)',
+              }}
+            >
               {lang === 'ka' ? 'ბიფურკაცია' : 'Bifurcation'}
             </span>
+
+            <span className="absolute -bottom-1 left-1 right-1 h-2 rounded-full bg-gradient-to-r from-violet-600/60 via-fuchsia-500/55 to-amber-400/60 blur-md" />
           </h1>
 
           <div className="flex items-stretch gap-3 pl-1 sm:gap-4">
@@ -829,10 +838,10 @@ export default function LandingPage({
                   : 'New challenges, social games, and a more confident you.'}
               </h2>
 
-              <p className="max-w-xl text-xs font-light text-slate-400 sm:text-sm">
+              <p className="max-w-3xl text-xs font-light leading-6 text-slate-400 sm:text-sm sm:leading-7">
                 {lang === 'ka'
-                  ? 'ეს არის შენი შემოქმედებითი გამბედაობის სივრცე, სადაც ყოველი მცირე გადაწყვეტილება გიბიძგებს პიროვნული ტრანსფორმაციისკენ.'
-                  : 'This is your safe zone of creative courage.'}
+                  ? '„ბიფურკაცია“ არის სივრცითი პროვოკაციული გამოწვევა — სოციალური თამაში, სადაც „არასტანდარტული ქმედებებით“ აგროვებ ქულებს, აზიარებ TikTok-ზე შესრულებულ დავალებებს, იღებ მხარდაჭერას და იბრძვი წოდებისთვის: „მე ვარ საუკეთესო“. ეს არის კოლექტიური თამაში, სადაც ბევრი ადამიანი გეხმარება შენ, და შენც ეხმარები სხვებს — უსაფრთხო, შემოქმედებითი და სახალისო გამოწვევებით დაძლიოთ ბარიერები, შიშები და კომპლექსები.'
+                  : 'Bifurcation is a spatial provocative challenge — a social game where you earn points through creative non-standard actions, share TikTok proof, receive support, and compete for the title: I am the best.'}
               </p>
             </div>
           </div>
