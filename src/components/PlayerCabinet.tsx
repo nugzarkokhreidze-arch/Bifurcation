@@ -754,11 +754,11 @@ export default function PlayerCabinet({
         ];
 
   return (
-    <div className="w-full space-y-6 rounded-3xl bg-[#FAF8FF] p-4 font-sans text-[#27213F] antialiased md:p-8">
-      <div className="relative flex flex-col items-center justify-between gap-4 overflow-hidden rounded-3xl border border-violet-100/80 bg-white p-6 shadow-sm md:flex-row">
+    <div className="w-full space-y-5 overflow-x-hidden rounded-2xl bg-[#FAF8FF] p-3 font-sans text-[#27213F] antialiased sm:rounded-3xl sm:p-5 md:p-8">
+      <div className="relative flex flex-col items-stretch justify-between gap-4 overflow-hidden rounded-2xl border border-violet-100/80 bg-white p-4 shadow-sm sm:rounded-3xl sm:p-6 md:flex-row md:items-center">
         <div className="absolute right-0 top-0 h-32 w-32 rounded-full bg-purple-50/40 blur-3xl" />
 
-        <div className="flex items-center gap-4 text-left">
+        <div className="flex min-w-0 items-center gap-3 text-left sm:gap-4">
           <div className="relative">
             <div className="absolute -top-4 left-1/2 -translate-x-1/2 animate-bounce text-xl">
               👑
@@ -766,13 +766,13 @@ export default function PlayerCabinet({
 
             <img
               src={displayUser.avatar}
-              className="h-16 w-16 rounded-full border-2 border-[#7C4DFF] bg-white object-cover p-0.5 shadow-sm"
+              className="h-12 w-12 rounded-full border-2 border-[#7C4DFF] bg-white object-cover p-0.5 shadow-sm sm:h-16 sm:w-16"
               alt="Avatar"
             />
           </div>
 
           <div>
-            <h2 className="flex items-center gap-2 text-xl font-black text-[#1e1b35]">
+            <h2 className="flex flex-wrap items-center gap-2 text-base font-black text-[#1e1b35] sm:text-xl">
               @{displayUser.nickname}
 
               <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-700">
@@ -795,8 +795,8 @@ export default function PlayerCabinet({
         </div>
 
         {currentUser ? (
-          <div className="flex flex-col items-center gap-3 sm:flex-row">
-            <div className="min-w-[160px] rounded-2xl bg-gradient-to-br from-[#6C40E7] to-[#4A24B2] px-6 py-4 text-center text-white shadow-md md:text-right">
+          <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
+            <div className="w-full rounded-2xl bg-gradient-to-br from-[#6C40E7] to-[#4A24B2] px-5 py-3 text-center text-white shadow-md sm:min-w-[160px] md:text-right">
               <p className="text-[10px] font-black uppercase tracking-widest text-purple-200">
                 {lang === 'ka' ? 'თქვენი ბალანსი' : 'Your balance'}
               </p>
@@ -864,7 +864,7 @@ export default function PlayerCabinet({
       )}
 
       {currentUser && (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex items-center gap-3 rounded-2xl border border-violet-100/60 bg-white p-4 text-left shadow-sm">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-50 text-orange-600">
               <Award className="h-5 w-5" />
@@ -941,7 +941,7 @@ export default function PlayerCabinet({
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 text-left sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 text-left sm:grid-cols-2 lg:grid-cols-4">
         {visibleMarathons.map(marathon => {
           const id = marathon.id;
           const shortId = shortMarathonId(id);
@@ -1033,7 +1033,7 @@ export default function PlayerCabinet({
         })}
       </div>
 
-      <div className="flex select-none gap-1.5 overflow-x-auto border-b border-violet-100/80 pb-1">
+      <div className="flex select-none gap-1.5 overflow-x-auto border-b border-violet-100/80 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {[
           {
             id: 'challenges',
@@ -1058,7 +1058,7 @@ export default function PlayerCabinet({
               key={tab.id}
               type="button"
               onClick={() => setCabinetTab(tab.id)}
-              className={`cursor-pointer whitespace-nowrap rounded-xl px-5 py-2.5 text-xs font-black transition-all ${
+              className={`shrink-0 cursor-pointer whitespace-nowrap rounded-xl px-3.5 py-2.5 text-[11px] font-black transition-all sm:px-5 sm:text-xs ${
                 cabinetTab === tab.id
                   ? 'bg-[#7C4DFF] text-white shadow-sm shadow-[#7C4DFF]/20'
                   : 'border border-violet-100/50 bg-white text-slate-600 hover:bg-slate-50'
@@ -1094,7 +1094,7 @@ export default function PlayerCabinet({
                 : 'No completed logs found yet.'}
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {completedChallengeCards.map((submission: any) => {
                 const url = getMediaUrl(submission);
                 const isTiktok = isTikTokSubmission(submission);
@@ -1217,7 +1217,7 @@ export default function PlayerCabinet({
           ))}
 
         {cabinetTab === 'consultation' && currentUser && (
-          <div className="mx-auto max-w-3xl space-y-4 rounded-2xl border border-violet-100/80 bg-white p-6 text-left shadow-sm">
+          <div className="mx-auto max-w-3xl space-y-4 rounded-2xl border border-violet-100/80 bg-white p-4 text-left shadow-sm sm:p-6">
             <div className="flex items-center gap-3">
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#7C4DFF]/10 text-[#7C4DFF]">
                 <Bot className="h-6 w-6" />
@@ -1267,7 +1267,7 @@ export default function PlayerCabinet({
               ))}
             </div>
 
-            <form onSubmit={handleGuideSubmit} className="flex gap-2">
+            <form onSubmit={handleGuideSubmit} className="flex flex-col gap-2 sm:flex-row">
               <input
                 value={guideInput}
                 onChange={event => setGuideInput(event.target.value)}
@@ -1281,7 +1281,7 @@ export default function PlayerCabinet({
 
               <button
                 type="submit"
-                className="inline-flex items-center gap-2 rounded-xl bg-[#7C4DFF] px-4 py-3 text-xs font-black text-white"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#7C4DFF] px-4 py-3 text-xs font-black text-white"
               >
                 <Send className="h-4 w-4" />
                 {lang === 'ka' ? 'გაგზავნა' : 'Send'}
@@ -1309,13 +1309,13 @@ export default function PlayerCabinet({
       </div>
 
       {fullscreenMedia && (
-        <div className="fixed inset-0 z-[55] flex flex-col items-center justify-center bg-black/90 p-4 text-white backdrop-blur-md">
-          <div className="w-full max-w-2xl space-y-4 text-center">
+        <div className="fixed inset-0 z-[55] flex flex-col items-center justify-start overflow-y-auto bg-black/90 p-2 pt-4 text-white backdrop-blur-md sm:justify-center sm:p-4">
+          <div className="w-full max-w-2xl space-y-3 text-center sm:space-y-4">
             <h3 className="truncate px-4 text-sm font-bold">
               {fullscreenMedia.title}
             </h3>
 
-            <div className="flex max-h-[60vh] min-h-[240px] w-full items-center justify-center overflow-hidden rounded-2xl border bg-black">
+            <div className="flex max-h-[48dvh] min-h-[220px] w-full items-center justify-center overflow-hidden rounded-2xl border bg-black sm:max-h-[60vh] sm:min-h-[240px]">
               {fullscreenMedia.type === 'tiktok' && fullscreenMedia.url && (
                 (() => {
                   const cleanUrl = normalizeTikTokUrl(fullscreenMedia.url);
@@ -1327,7 +1327,7 @@ export default function PlayerCabinet({
                         src={`https://www.tiktok.com/embed/v2/${videoId}`}
                         title="TikTok video"
                         allow="fullscreen"
-                        className="h-[540px] w-full max-w-md border-0 bg-black"
+                        className="h-[440px] w-full max-w-md border-0 bg-black sm:h-[540px]"
                       />
                     );
                   }
