@@ -167,36 +167,42 @@ function fileToDataUrl(file: File | null): Promise<string> {
   });
 }
 
-function safeSaveSubmissionToWall(submission: any) {
-  const cachedSubmissions = storageService.loadData<any[]>(
-    storageKeys.submissions,
-    []
-  );
+const WALL_SUBMISSION_KEYS = Array.from(
+  new Set([storageKeys.submissions, 'bifurcation_submissions'].filter(Boolean))
+);
+
+function saveSubmissionToKey(key: string, submission: any) {
+  const cachedSubmissions = storageService.loadData<any[]>(key, []);
 
   const nextSubmissions = [
     submission,
-    ...cachedSubmissions.filter(item => item.id !== submission.id),
+    ...cachedSubmissions.filter(
+      item =>
+        item.id !== submission.id &&
+        item.remoteId !== submission.id &&
+        item.id !== submission.remoteId
+    ),
   ];
 
-  try {
-    storageService.saveData(storageKeys.submissions, nextSubmissions);
-  } catch (error) {
-    console.warn('Could not save media submission. Retrying without media:', error);
+  storageService.saveData(key, nextSubmissions);
+}
 
-    const lighterSubmission = {
-      ...submission,
-      fileUrl: '',
-      videoUrl: '',
-      localPreviewUrl: '',
-    };
+function safeSaveSubmissionToWall(submission: any) {
+  for (const key of WALL_SUBMISSION_KEYS) {
+    try {
+      saveSubmissionToKey(key, submission);
+    } catch (error) {
+      console.warn(`Could not save submission to ${key}. Retrying without media:`, error);
 
-    storageService.saveData(
-      storageKeys.submissions,
-      [
-        lighterSubmission,
-        ...cachedSubmissions.filter(item => item.id !== submission.id),
-      ]
-    );
+      const lighterSubmission = {
+        ...submission,
+        fileUrl: '',
+        videoUrl: '',
+        localPreviewUrl: '',
+      };
+
+      saveSubmissionToKey(key, lighterSubmission);
+    }
   }
 }
 export default function ChallengeView({
@@ -506,6 +512,12 @@ function saveWallReadySubmission(params: {
     fileUrl,
     videoUrl: fileUrl,
     localPreviewUrl: params.localFileUrl || '',
+    fileName: params.savedSubmission.fileName || params.savedSubmission.file_name || '',
+    fileMime: params.savedSubmission.fileMime || params.savedSubmission.file_mime || '',
+    fileSize: params.savedSubmission.fileSize || params.savedSubmission.file_size || 0,
+    status: params.savedSubmission.status || 'completed',
+    isPublic: publishToWall,
+    userId: currentUser.id,
     likedBy: params.savedSubmission.likedBy || [],
     votedUserIds: params.savedSubmission.votedUserIds || [],
     votes: params.savedSubmission.votes || 0,
@@ -755,17 +767,17 @@ async function handleFormSubmit(event: React.FormEvent) {
   const timing = record.acceptedDates?.[selectedChallenge.id];
   const expireAt = typeof timing === 'string' ? timing : timing?.expireAt;
 
-  const submissionType: ChallengeSubmissionType | MediaType = isTextSubmission(
-    selectedChallenge.submissionType
-  )
-    ? (selectedChallenge.submissionType as ChallengeSubmissionType)
-    : mediaType;
+  const submissionType: ChallengeSubmissionType | MediaType = selectedFile
+    ? mediaType
+    : isTextSubmission(selectedChallenge.submissionType)
+      ? (selectedChallenge.submissionType as ChallengeSubmissionType)
+      : ('text' as ChallengeSubmissionType);
 
-  if (!isTextSubmission(submissionType as ChallengeSubmissionType) && !selectedFile) {
+  if (!selectedFile && !comment.trim()) {
     alert(
       lang === 'ka'
-        ? 'გთხოვთ ატვირთოთ ფოტო, ვიდეო ან აუდიო მტკიცებულება.'
-        : 'Please upload a photo, video or audio proof file.'
+        ? 'გთხოვთ ჩაწეროთ ტექსტური პასუხი ან ატვირთოთ ფოტო, ვიდეო ან აუდიო.'
+        : 'Please write a text response or upload a photo, video or audio file.'
     );
     return;
   }
@@ -826,39 +838,52 @@ async function handleFormSubmit(event: React.FormEvent) {
       localFileUrl,
     });
 
-    try {
-      const savedSubmission = await submissionService.createSubmission({
-        playerId: currentUser.id,
-        challengeId: selectedChallenge.id,
-        marathonId,
-        submissionType: submissionType as ChallengeSubmissionType,
-        visibility,
-        comment,
-        reflectionText: comment,
-        file: selectedFile,
-      });
+    const shouldSyncOnline =
+      Boolean(selectedFile) || isTextSubmission(selectedChallenge.submissionType);
 
-      wallReadySubmission = saveWallReadySubmission({
-        savedSubmission: {
-          ...wallReadySubmission,
-          ...savedSubmission,
-          publishToWall: visibility === 'public',
-          publish_to_wall: visibility === 'public',
-        },
-        challenge: selectedChallenge,
-        submissionType,
-        visibility,
-        comment,
-        localFileUrl,
-      });
-    } catch (submissionError) {
-      console.error('Public submission online save failed:', submissionError);
+    if (shouldSyncOnline) {
+      try {
+        const savedSubmission = await submissionService.createSubmission({
+          playerId: currentUser.id,
+          challengeId: selectedChallenge.id,
+          marathonId,
+          submissionType: submissionType as ChallengeSubmissionType,
+          visibility,
+          comment,
+          reflectionText: comment,
+          file: selectedFile,
+        });
 
-      setMessage(
-        lang === 'ka'
-          ? 'დავალება შეინახა ლოკალურად. Supabase-ში public ჩანაწერის ჩაწერა ვერ მოხერხდა.'
-          : 'Saved locally. Public Supabase submission could not be created.'
-      );
+        wallReadySubmission = saveWallReadySubmission({
+          savedSubmission: {
+            ...wallReadySubmission,
+            ...savedSubmission,
+            id: wallReadySubmission.id,
+            remoteId: savedSubmission?.id || wallReadySubmission.remoteId || '',
+            publishToWall: visibility === 'public',
+            publish_to_wall: visibility === 'public',
+          },
+          challenge: selectedChallenge,
+          submissionType,
+          visibility,
+          comment,
+          localFileUrl:
+            localFileUrl ||
+            savedSubmission?.fileUrl ||
+            savedSubmission?.videoUrl ||
+            savedSubmission?.file_url ||
+            savedSubmission?.video_url ||
+            '',
+        });
+      } catch (submissionError) {
+        console.error('Public submission online save failed:', submissionError);
+
+        setMessage(
+          lang === 'ka'
+            ? 'დავალება შეინახა ლოკალურად. Supabase-ში public ჩანაწერის ჩაწერა ვერ მოხერხდა.'
+            : 'Saved locally. Public Supabase submission could not be created.'
+        );
+      }
     }
 
     record.completedChallenges = uniqueList(
@@ -902,12 +927,16 @@ async function handleFormSubmit(event: React.FormEvent) {
 
     saveRecord(records, record);
 
-    await playerService.markChallengeCompleted({
-      playerId: currentUser.id,
-      challengeId: selectedChallenge.id,
-      visibility,
-      gainedPoints: points.totalPoints,
-    });
+    try {
+      await playerService.markChallengeCompleted({
+        playerId: currentUser.id,
+        challengeId: selectedChallenge.id,
+        visibility,
+        gainedPoints: points.totalPoints,
+      });
+    } catch (playerUpdateError) {
+      console.warn('Challenge completion saved locally only:', playerUpdateError);
+    }
 
     setMessage(
       lang === 'ka'
