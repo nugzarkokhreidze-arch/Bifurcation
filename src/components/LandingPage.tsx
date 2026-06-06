@@ -791,11 +791,11 @@ export default function LandingPage({
 
   return (
     <div className="min-h-screen w-full overflow-x-hidden bg-[#04020d] font-sans text-slate-100">
-      <section className="relative overflow-hidden bg-[#04020d] px-4 pb-20 pt-12 sm:px-8 md:px-12 lg:pb-28 lg:pt-16">
+      <section className="relative overflow-hidden bg-[#04020d] px-3 pb-12 pt-8 sm:px-6 sm:pb-16 sm:pt-12 md:px-10 lg:pb-24 lg:pt-16">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,#1c1544_0%,#050311_46%,#03010a_100%)]" />
 
-        <div className="relative z-10 mx-auto max-w-5xl space-y-6 text-left">
-          <div className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-[#120D2F]/75 px-4 py-1.5 text-xs font-bold text-violet-300 backdrop-blur-sm">
+        <div className="relative z-10 mx-auto max-w-5xl space-y-5 text-left sm:space-y-6">
+          <div className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-violet-500/30 bg-[#120D2F]/75 px-3 py-1.5 text-[11px] font-bold text-violet-300 backdrop-blur-sm sm:px-4 sm:text-xs">
             <Sparkles className="h-3.5 w-3.5 animate-pulse text-fuchsia-400" />
             <span>
               {lang === 'ka'
@@ -804,7 +804,7 @@ export default function LandingPage({
             </span>
           </div>
 
-          <h1 className="text-4xl font-black tracking-tight sm:text-7xl md:text-8xl">
+          <h1 className="text-[2.6rem] font-black leading-[0.95] tracking-tight sm:text-6xl md:text-7xl lg:text-8xl">
             <span className="bg-gradient-to-r from-violet-500 via-fuchsia-500 to-amber-500 bg-clip-text font-extrabold text-transparent drop-shadow-[0_0_15px_rgba(167,139,250,0.25)]">
               {lang === 'ka' ? 'ბიფურკაცია' : 'Bifurcation'}
             </span>
@@ -832,7 +832,7 @@ export default function LandingPage({
             <button
               type="button"
               onClick={handleStartGameClick}
-              className="flex cursor-pointer items-center justify-center gap-2 rounded-full bg-gradient-to-r from-violet-700 via-fuchsia-600 to-indigo-700 px-6 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-fuchsia-900/20 transition-all hover:scale-[1.02]"
+              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-gradient-to-r from-violet-700 via-fuchsia-600 to-indigo-700 px-5 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-fuchsia-900/20 transition-all hover:scale-[1.02] sm:w-auto sm:px-6"
             >
               <span>{lang === 'ka' ? 'დაიწყე თამაში' : 'Start the Game'}</span>
               <ArrowRight className="h-4 w-4" />
@@ -841,7 +841,7 @@ export default function LandingPage({
             <button
               type="button"
               onClick={handleViewMarathonsClick}
-              className="flex cursor-pointer items-center justify-center gap-2 rounded-full border border-white/10 bg-white/5 px-6 py-3.5 text-white transition-all hover:bg-white/10"
+              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-full border border-white/10 bg-white/5 px-5 py-3.5 text-sm text-white transition-all hover:bg-white/10 sm:w-auto sm:px-6"
             >
               <Play className="h-4 w-4 fill-fuchsia-400 text-fuchsia-400" />
               <span>
@@ -852,8 +852,8 @@ export default function LandingPage({
         </div>
       </section>
 
-      <section id="prize-support" className="relative z-10 -mt-8 px-4 sm:px-8 md:px-12">
-        <div className="mx-auto grid max-w-7xl gap-4 rounded-[28px] border border-white/10 bg-white/[0.06] p-5 text-left text-white shadow-2xl backdrop-blur-xl md:grid-cols-[1fr_1fr_1fr]">
+      <section id="prize-support" className="relative z-10 -mt-6 px-3 sm:-mt-8 sm:px-6 md:px-10">
+        <div className="mx-auto grid max-w-7xl gap-3 rounded-[24px] border border-white/10 bg-white/[0.06] p-4 text-left text-white shadow-2xl backdrop-blur-xl sm:p-5 md:grid-cols-3">
           <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4">
             <p className="text-xs font-black uppercase tracking-widest text-amber-200">🏆 ფულადი პრიზი</p>
             <p className="mt-2 text-sm leading-6 text-amber-50">
@@ -877,11 +877,11 @@ export default function LandingPage({
         </div>
       </section>
 
-      <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-12 sm:px-8 lg:flex-row lg:px-12">
+      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-3 py-8 sm:px-6 sm:py-10 lg:flex-row lg:gap-8 lg:px-10 lg:py-12">
         <div className="flex-1 space-y-12">
           <div
             id="submissions-showcase"
-            className="space-y-6 rounded-[32px] border border-[#E3DDF4] bg-[#FFF0E8] p-6 text-left shadow-[0_12px_30px_rgba(94,88,120,0.04)] sm:p-10"
+            className="space-y-5 rounded-[24px] border border-[#E3DDF4] bg-[#FFF0E8] p-4 text-left shadow-[0_12px_30px_rgba(94,88,120,0.04)] sm:space-y-6 sm:rounded-[32px] sm:p-8 lg:p-10"
           >
             <div className="space-y-2">
               <div className="inline-flex items-center gap-1.5 rounded-full border border-[#FF9B6A]/20 bg-[#FF9B6A]/10 px-3.5 py-1 text-xs font-extrabold uppercase text-[#FF9B6A]">
@@ -890,14 +890,14 @@ export default function LandingPage({
                   : 'Public Courage Wall'}
               </div>
 
-              <h2 className="text-2xl font-black tracking-tight text-[#27213F] md:text-3xl">
+              <h2 className="text-xl font-black tracking-tight text-[#27213F] sm:text-2xl md:text-3xl">
                 {lang === 'ka' ? 'კომპლექსები, შიში და ' : 'Complexes, fear and '}
                 <span className="text-[#FF9B6A]">
                   {lang === 'ka' ? 'სოციალური სიმამაცე' : 'social courage'}
                 </span>
               </h2>
 
-              <p className="text-xs font-light text-[#5E5878] md:text-sm">
+              <p className="text-[12px] font-light leading-6 text-[#5E5878] md:text-sm">
                 {lang === 'ka'
                   ? 'აქ ჩანს TikTok-ზე შესრულებული გამოწვევები. საიტზე მიღებული ნახვები, გულები და კომენტარები ზრდის მოთამაშის ჩართულობის ქულებს.'
                   : 'Only submissions marked public by players appear here.'}
@@ -925,7 +925,7 @@ export default function LandingPage({
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 xl:grid-cols-3">
                 {currentFeedSubmissions.map((sub: any) => {
                   const guestVoterId =
                     typeof window !== 'undefined'
@@ -940,7 +940,7 @@ export default function LandingPage({
                     <div
                       key={sub.id}
                       onClick={() => handleOpenSubmission(sub)}
-                      className="group relative flex cursor-pointer flex-col overflow-hidden rounded-[24px] border border-[#E8E2F1] bg-white transition-all duration-300 hover:shadow-xl"
+                      className="group relative flex cursor-pointer flex-col overflow-hidden rounded-[20px] border border-[#E8E2F1] bg-white transition-all duration-300 hover:shadow-xl sm:rounded-[24px]"
                     >
                       <div className="relative aspect-video select-none overflow-hidden bg-slate-950">
                         {renderSubmissionMedia(sub, 'card')}
@@ -1030,7 +1030,7 @@ export default function LandingPage({
 
           <div
             id="marathons-dashboard"
-            className="space-y-6 rounded-[32px] border border-[#E3DDF4] bg-[#EAF8F2] p-6 text-left sm:p-10"
+            className="space-y-5 rounded-[24px] border border-[#E3DDF4] bg-[#EAF8F2] p-4 text-left sm:space-y-6 sm:rounded-[32px] sm:p-8 lg:p-10"
           >
             <div className="space-y-2">
               <span className="rounded-full bg-[#32B88A]/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-[#32B88A]">
@@ -1044,7 +1044,7 @@ export default function LandingPage({
               </h2>
             </div>
 
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {allMarathons.map((marathon: any) => {
                 const playerRecord = currentUser
                   ? monthlyPlayerRecords.find(
@@ -1136,7 +1136,7 @@ export default function LandingPage({
 
           <div
             id="values-section"
-            className="space-y-6 rounded-[32px] border border-[#E3DDF4] bg-[#EAF3FF] p-6 text-left sm:p-10"
+            className="space-y-5 rounded-[24px] border border-[#E3DDF4] bg-[#EAF3FF] p-4 text-left sm:space-y-6 sm:rounded-[32px] sm:p-8 lg:p-10"
           >
             <div className="mx-auto max-w-xl space-y-1 text-center">
               <span className="rounded-full bg-[#4C8DFF]/10 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-[#4C8DFF]">
@@ -1148,7 +1148,7 @@ export default function LandingPage({
               </h3>
             </div>
 
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-5">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
               {values.map((value, index) => {
                 const Icon = value.icon;
 
@@ -1176,7 +1176,7 @@ export default function LandingPage({
 
           <div
             id="conditions-section"
-            className="space-y-6 rounded-[32px] border border-[#E3DDF4] bg-[#FFF0F6] p-6 text-left sm:p-10"
+            className="space-y-5 rounded-[24px] border border-[#E3DDF4] bg-[#FFF0F6] p-4 text-left sm:space-y-6 sm:rounded-[32px] sm:p-8 lg:p-10"
           >
             <div className="mx-auto max-w-xl space-y-1 text-center">
               <span className="rounded-full bg-[#E76FD6]/10 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-[#E76FD6]">
@@ -1190,7 +1190,7 @@ export default function LandingPage({
               </h3>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
               {rules.map((rule, index) => {
                 const Icon = rule.icon;
 
@@ -1217,7 +1217,7 @@ export default function LandingPage({
           </div>
         </div>
 
-        <div className="w-full shrink-0 lg:sticky lg:top-24 lg:w-76">
+        <div className="w-full shrink-0 lg:sticky lg:top-24 lg:w-72 xl:w-80">
           <LiveLeaderboardSidebar
             currentUser={currentUser}
             lang={lang === 'ka' ? 'ka' : 'en'}
@@ -1243,8 +1243,8 @@ export default function LandingPage({
           const voteCount = likedBy.length || liveActiveSub.votes || 0;
 
           return (
-            <div className="fixed inset-0 z-[55] flex items-start justify-center overflow-y-auto bg-black/80 p-3 pt-6 backdrop-blur-md sm:p-5 sm:pt-8">
-              <div className="relative max-h-[88vh] w-full max-w-xl space-y-3 overflow-y-auto rounded-3xl border bg-white p-4 text-left shadow-2xl sm:p-5">
+            <div className="fixed inset-0 z-[55] flex items-start justify-center overflow-y-auto bg-black/80 p-2 pt-3 backdrop-blur-md sm:p-5 sm:pt-8">
+              <div className="relative max-h-[calc(100dvh-1rem)] w-full max-w-xl space-y-3 overflow-y-auto rounded-2xl border bg-white p-3 text-left shadow-2xl sm:max-h-[88vh] sm:rounded-3xl sm:p-5">
                 <button
                   type="button"
                   onClick={() => setActiveMediaSub(null)}
@@ -1278,7 +1278,7 @@ export default function LandingPage({
                   </div>
                 </div>
 
-                <div className="relative flex min-h-[280px] max-h-[50vh] items-center justify-center overflow-hidden rounded-2xl bg-black">
+                <div className="relative flex min-h-[240px] max-h-[44dvh] items-center justify-center overflow-hidden rounded-2xl bg-black sm:min-h-[280px] sm:max-h-[50vh]">
                   {renderSubmissionMedia(liveActiveSub, 'modal')}
                 </div>
 
@@ -1443,8 +1443,8 @@ export default function LandingPage({
           const challenges = getPreviewChallenges(marathon);
 
           return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md antialiased">
-              <div className="relative max-h-[92vh] w-full max-w-4xl space-y-6 overflow-y-auto rounded-3xl border border-violet-100 bg-white p-6 text-left shadow-2xl sm:p-8">
+            <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-2 pt-4 backdrop-blur-md antialiased sm:items-center sm:p-4">
+              <div className="relative max-h-[calc(100dvh-1rem)] w-full max-w-4xl space-y-4 overflow-y-auto rounded-2xl border border-violet-100 bg-white p-4 text-left shadow-2xl sm:max-h-[92vh] sm:space-y-6 sm:rounded-3xl sm:p-8">
                 <button
                   type="button"
                   onClick={() => setSelectedPreviewMarathon(null)}
@@ -1623,8 +1623,8 @@ export default function LandingPage({
               : challenge.difficulty || 'medium';
 
           return (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4 backdrop-blur-lg antialiased">
-              <div className="relative max-h-[90vh] w-full max-w-xl space-y-5 overflow-y-auto rounded-3xl border border-violet-100 bg-white p-6 text-left shadow-2xl sm:p-7">
+            <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/85 p-2 pt-4 backdrop-blur-lg antialiased sm:items-center sm:p-4">
+              <div className="relative max-h-[calc(100dvh-1rem)] w-full max-w-xl space-y-4 overflow-y-auto rounded-2xl border border-violet-100 bg-white p-4 text-left shadow-2xl sm:max-h-[90vh] sm:space-y-5 sm:rounded-3xl sm:p-7">
                 <button
                   type="button"
                   onClick={() => setSelectedPreviewChallenge(null)}
