@@ -52,6 +52,8 @@ const challengeImages = [
 ];
 
 const EXTRA_SUBMISSIONS_KEY = 'bifurcation_submissions';
+const PLAIN_SUBMISSIONS_KEY = 'submissions';
+const LAST_SUBMISSION_DEBUG_KEY = 'bifurcation_last_submission_debug';
 
 function normalizeMarathonId(id: string) {
   return id.startsWith('marathon-') ? id : `marathon-${id}`;
@@ -60,11 +62,64 @@ function normalizeMarathonId(id: string) {
 function getSubmissionStorageKeys() {
   return Array.from(
     new Set(
-      [storageKeys.submissions, EXTRA_SUBMISSIONS_KEY].filter(
-        (key): key is string => Boolean(key)
-      )
+      [
+        storageKeys.submissions,
+        EXTRA_SUBMISSIONS_KEY,
+        PLAIN_SUBMISSIONS_KEY,
+      ].filter((key): key is string => Boolean(key))
     )
   );
+}
+
+function loadArrayFromStorageKey<T = any>(key: string): T[] {
+  try {
+    const fromService = storageService.loadData<T[]>(key, []);
+
+    if (Array.isArray(fromService)) {
+      return fromService;
+    }
+  } catch (error) {
+    console.warn(`storageService.loadData failed for ${key}:`, error);
+  }
+
+  if (typeof window === 'undefined') return [];
+
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn(`localStorage read failed for ${key}:`, error);
+    return [];
+  }
+}
+
+function saveArrayToStorageKey<T = any>(key: string, items: T[]) {
+  try {
+    storageService.saveData(key, items);
+  } catch (error) {
+    console.warn(`storageService.saveData failed for ${key}:`, error);
+  }
+
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(key, JSON.stringify(items));
+  } catch (error) {
+    console.warn(`localStorage write failed for ${key}:`, error);
+  }
+}
+
+function notifyLocalStorageChanged() {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.dispatchEvent(new Event('storage'));
+    window.dispatchEvent(new CustomEvent('bifurcation-storage-updated'));
+  } catch (error) {
+    console.warn('Could not dispatch storage update event:', error);
+  }
 }
 
 function makeLocalSubmissionId() {
@@ -145,7 +200,7 @@ function mergeSubmissions(...lists: any[][]) {
 
 function loadAllSubmissions() {
   const lists = getSubmissionStorageKeys().map(key =>
-    storageService.loadData<any[]>(key, [])
+    loadArrayFromStorageKey<any>(key)
   );
 
   return mergeSubmissions(...lists);
@@ -153,27 +208,62 @@ function loadAllSubmissions() {
 
 function saveAllSubmissions(items: any[]) {
   for (const key of getSubmissionStorageKeys()) {
-    try {
-      storageService.saveData(key, items);
-    } catch (error) {
-      console.warn(`Could not save submissions to ${key}:`, error);
-    }
+    saveArrayToStorageKey(key, items);
   }
+
+  notifyLocalStorageChanged();
 }
 
 function safeSaveSubmission(submission: any) {
   const cached = loadAllSubmissions();
+
   const next = mergeSubmissions(
     [submission],
     cached.filter(
       item =>
         item.id !== submission.id &&
         item.remoteId !== submission.id &&
-        item.id !== submission.remoteId
+        item.id !== submission.remoteId &&
+        !(
+          item.playerId === submission.playerId &&
+          item.challengeId === submission.challengeId &&
+          item.marathonId === submission.marathonId
+        )
     )
   );
 
   saveAllSubmissions(next);
+
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem(
+        LAST_SUBMISSION_DEBUG_KEY,
+        JSON.stringify(submission)
+      );
+    } catch (error) {
+      console.warn('Could not save last submission debug copy:', error);
+    }
+  }
+}
+
+function findExistingSubmissionForChallenge(
+  playerId: string,
+  challengeId: string,
+  marathonId?: string
+) {
+  return loadAllSubmissions().find(item => {
+    const samePlayer = item.playerId === playerId || item.userId === playerId;
+    const sameChallenge = item.challengeId === challengeId;
+
+    if (!samePlayer || !sameChallenge) return false;
+
+    if (!marathonId) return true;
+
+    return (
+      item.marathonId === marathonId ||
+      normalizeMarathonId(String(item.marathonId || '')) === marathonId
+    );
+  });
 }
 
 function saveUserProgressLocally(
@@ -648,7 +738,16 @@ export default function ChallengeView({
     const marathonId = normalizeMarathonId(selectedMarathonId);
     const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
 
-    if (record.completedChallenges.includes(selectedChallenge.id)) {
+    const existingSubmission = findExistingSubmissionForChallenge(
+      currentUser.id,
+      selectedChallenge.id,
+      marathonId
+    );
+
+    const completedWithoutSavedSubmission =
+      record.completedChallenges.includes(selectedChallenge.id) && !existingSubmission;
+
+    if (record.completedChallenges.includes(selectedChallenge.id) && existingSubmission) {
       setErrorMessage(
         lang === 'ka'
           ? 'ეს გამოწვევა უკვე შესრულებულია.'
@@ -657,7 +756,9 @@ export default function ChallengeView({
       return;
     }
 
-    const expired = await applyExpiredPenaltyIfNeeded(selectedChallenge.id);
+    const expired = completedWithoutSavedSubmission
+      ? false
+      : await applyExpiredPenaltyIfNeeded(selectedChallenge.id);
 
     if (expired) {
       setErrorMessage(
@@ -668,7 +769,7 @@ export default function ChallengeView({
       return;
     }
 
-    if (record.skippedChallenges.includes(selectedChallenge.id)) {
+    if (!completedWithoutSavedSubmission && record.skippedChallenges.includes(selectedChallenge.id)) {
       setErrorMessage(
         lang === 'ka'
           ? 'ეს გამოწვევა აცილებულია. დადასტურებამდე თავიდან მიიღეთ გამოწვევა.'
@@ -677,7 +778,10 @@ export default function ChallengeView({
       return;
     }
 
-    if (!record.acceptedChallenges.includes(selectedChallenge.id)) {
+    if (
+      !completedWithoutSavedSubmission &&
+      !record.acceptedChallenges.includes(selectedChallenge.id)
+    ) {
       setErrorMessage(
         lang === 'ka'
           ? 'დადასტურებამდე ჯერ უნდა მიიღოთ გამოწვევა.'
@@ -718,6 +822,8 @@ export default function ChallengeView({
         visibility: 'public',
         expireAt,
       });
+
+      const gainedPoints = completedWithoutSavedSubmission ? 0 : points.totalPoints;
 
       const now = new Date().toISOString();
       const submissionId = makeLocalSubmissionId();
@@ -800,13 +906,13 @@ export default function ChallengeView({
 
       record.points = Math.max(
         0,
-        (record.points || currentUser.points || 0) + points.totalPoints
+        (record.points || currentUser.points || 0) + gainedPoints
       );
 
       addPointHistory(record, {
         challengeId: selectedChallenge.id,
         submissionId: submission.id,
-        amount: points.totalPoints,
+        amount: gainedPoints,
         reason: 'challenge-completed-tiktok-link',
         breakdown: points,
       });
@@ -816,7 +922,7 @@ export default function ChallengeView({
         currentUser,
         selectedChallenge.id,
         submission.id,
-        points.totalPoints
+        gainedPoints
       );
 
       try {
@@ -824,7 +930,7 @@ export default function ChallengeView({
           playerId: currentUser.id,
           challengeId: selectedChallenge.id,
           visibility: 'public',
-          gainedPoints: points.totalPoints,
+          gainedPoints,
         });
       } catch (playerUpdateError) {
         console.warn('Challenge completion saved locally only:', playerUpdateError);
@@ -832,8 +938,12 @@ export default function ChallengeView({
 
       setMessage(
         lang === 'ka'
-          ? `დავალება დადასტურდა TikTok ბმულით! დაემატა +${points.totalPoints} ქულა 🎉`
-          : `Challenge confirmed with TikTok link! +${points.totalPoints} points added 🎉`
+          ? gainedPoints > 0
+            ? `დავალება დადასტურდა TikTok ბმულით! დაემატა +${gainedPoints} ქულა 🎉`
+            : 'TikTok ბმული შეინახა. ამ გამოწვევის ქულა უკვე დარიცხული იყო.'
+          : gainedPoints > 0
+            ? `Challenge confirmed with TikTok link! +${gainedPoints} points added 🎉`
+            : 'TikTok link saved. Points for this challenge were already awarded.'
       );
 
       window.setTimeout(() => {
@@ -866,7 +976,20 @@ export default function ChallengeView({
       };
     }
 
-    const completed = playerRecord.completedChallenges?.includes(challenge.id);
+    const completedInRecord = playerRecord.completedChallenges?.includes(challenge.id);
+
+    const hasSavedSubmission = currentUser
+      ? Boolean(
+          findExistingSubmissionForChallenge(
+            currentUser.id,
+            challenge.id,
+            normalizeMarathonId(selectedMarathonId)
+          )
+        )
+      : false;
+
+    const completed = Boolean(completedInRecord && hasSavedSubmission);
+    const completedButMissingProof = Boolean(completedInRecord && !hasSavedSubmission);
     const skipped = playerRecord.skippedChallenges?.includes(challenge.id);
     const expiredStored = playerRecord.expiredChallenges?.includes(challenge.id);
     const accepted = playerRecord.acceptedChallenges?.includes(challenge.id);
@@ -881,6 +1004,15 @@ export default function ChallengeView({
         label: lang === 'ka' ? 'შესრულებული' : 'Completed',
         className: 'text-emerald-600',
         icon: '✅',
+      };
+    }
+
+    if (completedButMissingProof) {
+      return {
+        key: 'active',
+        label: lang === 'ka' ? 'ბმული აკლია' : 'Link missing',
+        className: 'text-amber-600',
+        icon: '🔗',
       };
     }
 
