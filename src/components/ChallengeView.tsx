@@ -1,20 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  Camera,
   CheckCircle,
   Clock,
+  ExternalLink,
   Eye,
-  EyeOff,
-  Mic,
+  Link2,
   ShieldCheck,
   Sparkles,
   Star,
-  UploadCloud,
-  Video,
-  Volume2,
 } from 'lucide-react';
 
-import { Challenge, ChallengeSubmissionType, User } from '../types';
+import { Challenge, User } from '../types';
 import { marathonService } from '../services/marathonService';
 import { playerService } from '../services/playerService';
 import {
@@ -30,7 +26,6 @@ import {
   POINTS_CONFIG,
 } from '../services/pointsService';
 import { storageKeys, storageService } from '../services/storageService';
-import { submissionService } from '../services/submissionService';
 
 interface ChallengeViewProps {
   currentUser: User | null;
@@ -42,8 +37,6 @@ interface ChallengeViewProps {
   onStartRegister?: () => void;
   onStartLogin?: () => void;
 }
-
-type MediaType = 'video' | 'photo' | 'audio';
 
 const challengeImages = [
   'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=700&q=80',
@@ -58,48 +51,30 @@ const challengeImages = [
   'https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?auto=format&fit=crop&w=700&q=80',
 ];
 
+const EXTRA_SUBMISSIONS_KEY = 'bifurcation_submissions';
+
 function normalizeMarathonId(id: string) {
   return id.startsWith('marathon-') ? id : `marathon-${id}`;
 }
 
-function getFileAcceptAttribute() {
-  return [
-    'video/*',
-    'image/*',
-    'audio/*',
-    'video/mp4',
-    'video/quicktime',
-    'video/webm',
-    'video/mov',
-    'image/jpeg',
-    'image/png',
-    'image/webp',
-    'image/heic',
-    'image/heif',
-    'audio/mp3',
-    'audio/wav',
-    'audio/m4a',
-    'audio/mpeg',
-    'audio/mp4',
-    'audio/ogg',
-  ].join(',');
+function getSubmissionStorageKeys() {
+  return Array.from(
+    new Set(
+      [storageKeys.submissions, EXTRA_SUBMISSIONS_KEY].filter(
+        (key): key is string => Boolean(key)
+      )
+    )
+  );
 }
 
-function detectMediaType(file: File): MediaType {
-  const type = file.type.toLowerCase();
-  const name = file.name.toLowerCase();
-
-  if (type.startsWith('image/')) return 'photo';
-
-  if (type.startsWith('audio/') || /\.(mp3|wav|m4a|ogg|aac)$/i.test(name)) {
-    return 'audio';
-  }
-
-  return 'video';
+function makeLocalSubmissionId() {
+  return `sub-tiktok-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function isTextSubmission(type?: ChallengeSubmissionType) {
-  return type === 'reflection' || type === 'text';
+function getFallbackAvatar(nickname: string) {
+  return `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(
+    nickname || 'player'
+  )}`;
 }
 
 function uniqueList(list: string[] = [], item: string) {
@@ -108,6 +83,26 @@ function uniqueList(list: string[] = [], item: string) {
 
 function removeFromList(list: string[] = [], item: string) {
   return list.filter(id => id !== item);
+}
+
+function normalizeSocialUrl(value: string) {
+  return value.trim();
+}
+
+function isValidTikTokUrl(value: string) {
+  try {
+    const url = new URL(normalizeSocialUrl(value));
+    const host = url.hostname.replace(/^www\./, '').toLowerCase();
+
+    return (
+      host === 'tiktok.com' ||
+      host === 'm.tiktok.com' ||
+      host === 'vm.tiktok.com' ||
+      host === 'vt.tiktok.com'
+    );
+  } catch {
+    return false;
+  }
 }
 
 function formatDateTime(value?: string, lang: 'ka' | 'en' = 'ka') {
@@ -128,83 +123,116 @@ function formatDateTime(value?: string, lang: 'ka' | 'en' = 'ka') {
   });
 }
 
-function getFallbackAvatar(nickname: string) {
-  return `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(
-    nickname || 'player'
-  )}`;
-}
-function makeLocalSubmissionId() {
-  return `sub-local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
+function mergeSubmissions(...lists: any[][]) {
+  const map = new Map<string, any>();
 
-function fileToDataUrl(file: File | null): Promise<string> {
-  return new Promise(resolve => {
-    if (!file) {
-      resolve('');
-      return;
-    }
+  lists.flat().forEach(item => {
+    if (!item) return;
 
-    // ძალიან დიდი ვიდეოები localStorage-ში ვერ ჩაეტევა.
-    // Supabase მაინც ცდის ატვირთვას, მაგრამ ლოკალურად ფოტო/აუდიო/პატარა ფაილი გამოჩნდება.
-    const maxLocalSize = 4 * 1024 * 1024;
+    const key = item.id || item.remoteId || item.remote_id;
+    if (!key) return;
 
-    if (file.size > maxLocalSize) {
-      resolve('');
-      return;
-    }
+    const previous = map.get(key) || {};
+    map.set(key, { ...previous, ...item, id: item.id || previous.id || key });
+  });
 
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      resolve(typeof reader.result === 'string' ? reader.result : '');
-    };
-
-    reader.onerror = () => {
-      resolve('');
-    };
-
-    reader.readAsDataURL(file);
+  return Array.from(map.values()).sort((a, b) => {
+    const aTime = new Date(a.createdAt || a.created_at || 0).getTime();
+    const bTime = new Date(b.createdAt || b.created_at || 0).getTime();
+    return bTime - aTime;
   });
 }
 
-const WALL_SUBMISSION_KEYS = Array.from(
-  new Set([storageKeys.submissions, 'bifurcation_submissions'].filter(Boolean))
-);
+function loadAllSubmissions() {
+  const lists = getSubmissionStorageKeys().map(key =>
+    storageService.loadData<any[]>(key, [])
+  );
 
-function saveSubmissionToKey(key: string, submission: any) {
-  const cachedSubmissions = storageService.loadData<any[]>(key, []);
+  return mergeSubmissions(...lists);
+}
 
-  const nextSubmissions = [
-    submission,
-    ...cachedSubmissions.filter(
+function saveAllSubmissions(items: any[]) {
+  for (const key of getSubmissionStorageKeys()) {
+    try {
+      storageService.saveData(key, items);
+    } catch (error) {
+      console.warn(`Could not save submissions to ${key}:`, error);
+    }
+  }
+}
+
+function safeSaveSubmission(submission: any) {
+  const cached = loadAllSubmissions();
+  const next = mergeSubmissions(
+    [submission],
+    cached.filter(
       item =>
         item.id !== submission.id &&
         item.remoteId !== submission.id &&
         item.id !== submission.remoteId
-    ),
-  ];
+    )
+  );
 
-  storageService.saveData(key, nextSubmissions);
+  saveAllSubmissions(next);
 }
 
-function safeSaveSubmissionToWall(submission: any) {
-  for (const key of WALL_SUBMISSION_KEYS) {
-    try {
-      saveSubmissionToKey(key, submission);
-    } catch (error) {
-      console.warn(`Could not save submission to ${key}. Retrying without media:`, error);
+function saveUserProgressLocally(
+  user: User,
+  challengeId: string,
+  submissionId: string,
+  gainedPoints: number
+) {
+  const currentSavedUser = storageService.loadData<User | null>(
+    storageKeys.currentUser,
+    user
+  );
 
-      const lighterSubmission = {
-        ...submission,
-        fileUrl: '',
-        videoUrl: '',
-        localPreviewUrl: '',
-      };
+  const updatedCurrentUser = {
+    ...(currentSavedUser || user),
+    points: ((currentSavedUser || user).points || 0) + gainedPoints,
+    completedChallenges: uniqueList(
+      (currentSavedUser || user).completedChallenges || [],
+      challengeId
+    ),
+    publicChallenges: uniqueList(
+      (currentSavedUser || user).publicChallenges || [],
+      submissionId
+    ),
+  } as User;
 
-      saveSubmissionToKey(key, lighterSubmission);
-    }
+  storageService.saveData(storageKeys.currentUser, updatedCurrentUser);
+
+  const userKeys = Array.from(
+    new Set(
+      [storageKeys.users, (storageKeys as any).players].filter(
+        (key): key is string => Boolean(key)
+      )
+    )
+  );
+
+  for (const key of userKeys) {
+    const users = storageService.loadData<User[]>(key, []);
+    const exists = users.some(item => item.id === user.id);
+    const updatedUsers = exists
+      ? users.map(item =>
+          item.id === user.id
+            ? {
+                ...item,
+                points: (item.points || 0) + gainedPoints,
+                completedChallenges: uniqueList(
+                  item.completedChallenges || [],
+                  challengeId
+                ),
+                publicChallenges: uniqueList(item.publicChallenges || [], submissionId),
+              }
+            : item
+        )
+      : [updatedCurrentUser, ...users];
+
+    storageService.saveData(key, updatedUsers);
   }
 }
+
 export default function ChallengeView({
   currentUser,
   onStateUpdate,
@@ -218,19 +246,13 @@ export default function ChallengeView({
     null
   );
 
-  const [mediaType, setMediaType] = useState<MediaType>('video');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [filePreviewUrl, setFilePreviewUrl] = useState('');
-  const [visibility, setVisibility] = useState<'public' | 'hidden'>('public');
+  const [tiktokUrl, setTiktokUrl] = useState('');
   const [comment, setComment] = useState('');
   const [message, setMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
-  const [isDragActive, setIsDragActive] = useState(false);
   const [forceUpdate, setForceUpdate] = useState(0);
   const [countdownTick, setCountdownTick] = useState(0);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -267,14 +289,6 @@ export default function ChallengeView({
       mounted = false;
     };
   }, [selectedMarathonId, forceUpdate]);
-
-  useEffect(() => {
-    return () => {
-      if (filePreviewUrl) {
-        URL.revokeObjectURL(filePreviewUrl);
-      }
-    };
-  }, [filePreviewUrl]);
 
   const playerRecord = useMemo(() => {
     if (!currentUser) return null;
@@ -322,10 +336,10 @@ export default function ChallengeView({
 
     return calculateCompletionPoints({
       challenge: selectedChallenge,
-      visibility,
+      visibility: 'public',
       expireAt: selectedTiming?.expireAt,
     });
-  }, [selectedChallenge, visibility, selectedTiming, countdownTick]);
+  }, [selectedChallenge, selectedTiming, countdownTick]);
 
   function getChallengeTitle(challenge: Challenge) {
     return lang === 'ka'
@@ -351,55 +365,20 @@ export default function ChallengeView({
 
   function getSafetyRules(challenge: Challenge) {
     const fallbackKa =
-      'შეასრულეთ გამოწვევა უსაფრთხოდ, პატივისცემით და კანონის დაცვით. არ ჩააყენოთ საკუთარი თავი ან სხვა ადამიანი უხერხულ, საშიშ ან დამამცირებელ მდგომარეობაში. თუ სიტუაცია არაკომფორტულია, შეწყვიტეთ მოქმედება.';
+      'შეასრულეთ გამოწვევა უსაფრთხოდ, პატივისცემით და კანონის დაცვით. ვიდეო ატვირთეთ TikTok-ზე მხოლოდ მაშინ, თუ ის არ შეიცავს საფრთხეს, დამცირებას, შეურაცხყოფას ან სხვა ადამიანის პირად სივრცეში ჩარევას.';
     const fallbackEn =
-      'Complete the challenge safely, respectfully and legally. Do not put yourself or others in an unsafe, humiliating or uncomfortable situation. Stop if the situation feels wrong.';
+      'Complete the challenge safely, respectfully and legally. Publish on TikTok only if the content is not unsafe, humiliating, offensive or invasive of another person’s privacy.';
 
     return lang === 'ka'
       ? challenge.safetyRules || fallbackKa
       : challenge.safetyRules_en || challenge.safetyRules || fallbackEn;
   }
 
-  function resetUploadForm() {
-    if (filePreviewUrl) {
-      URL.revokeObjectURL(filePreviewUrl);
-    }
-
-    setSelectedFile(null);
-    setFilePreviewUrl('');
+  function resetSubmitForm() {
+    setTiktokUrl('');
     setComment('');
-    setVisibility('public');
     setMessage('');
     setErrorMessage('');
-    setIsDragActive(false);
-  }
-
-  function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-
-    if (!file) return;
-
-    if (filePreviewUrl) {
-      URL.revokeObjectURL(filePreviewUrl);
-    }
-
-    setSelectedFile(file);
-    setFilePreviewUrl(URL.createObjectURL(file));
-    setMediaType(detectMediaType(file));
-  }
-
-  function triggerFileInput(type: MediaType) {
-    setMediaType(type);
-    setSelectedFile(null);
-
-    if (filePreviewUrl) {
-      URL.revokeObjectURL(filePreviewUrl);
-      setFilePreviewUrl('');
-    }
-
-    window.setTimeout(() => {
-      fileInputRef.current?.click();
-    }, 50);
   }
 
   function ensureLocalRecord(playerId: string, marathonId: string) {
@@ -470,67 +449,6 @@ export default function ChallengeView({
     });
   }
 
-function saveWallReadySubmission(params: {
-  savedSubmission: any;
-  challenge: Challenge;
-  submissionType: ChallengeSubmissionType | MediaType;
-  visibility: 'public' | 'hidden';
-  comment: string;
-  localFileUrl?: string;
-}) {
-  if (!currentUser) return params.savedSubmission;
-
-  const publishToWall = params.visibility === 'public';
-
-  const fileUrl =
-    params.savedSubmission.fileUrl ||
-    params.savedSubmission.videoUrl ||
-    params.savedSubmission.file_url ||
-    params.savedSubmission.video_url ||
-    params.localFileUrl ||
-    '';
-
-  const wallReadySubmission = {
-    ...params.savedSubmission,
-    id: params.savedSubmission.id || makeLocalSubmissionId(),
-    playerId: currentUser.id,
-    challengeId: params.challenge.id,
-    marathonId: normalizeMarathonId(selectedMarathonId),
-    submissionType: params.submissionType,
-    visibility: publishToWall ? 'public' : 'hidden',
-    publishToWall,
-    publish_to_wall: publishToWall,
-    approved: true,
-    playerNickname: currentUser.nickname || currentUser.firstName || 'მოთამაშე',
-    playerAvatar:
-      currentUser.avatar ||
-      getFallbackAvatar(currentUser.nickname || currentUser.email || currentUser.id),
-    challengeTitle: getChallengeTitle(params.challenge),
-    comment: params.comment,
-    reflectionText: params.comment,
-    textDescription: params.comment,
-    fileUrl,
-    videoUrl: fileUrl,
-    localPreviewUrl: params.localFileUrl || '',
-    fileName: params.savedSubmission.fileName || params.savedSubmission.file_name || '',
-    fileMime: params.savedSubmission.fileMime || params.savedSubmission.file_mime || '',
-    fileSize: params.savedSubmission.fileSize || params.savedSubmission.file_size || 0,
-    status: params.savedSubmission.status || 'completed',
-    isPublic: publishToWall,
-    userId: currentUser.id,
-    likedBy: params.savedSubmission.likedBy || [],
-    votedUserIds: params.savedSubmission.votedUserIds || [],
-    votes: params.savedSubmission.votes || 0,
-    likes: params.savedSubmission.likes || 0,
-    createdAt: params.savedSubmission.createdAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  safeSaveSubmissionToWall(wallReadySubmission);
-
-  return wallReadySubmission;
-}
-
   async function handleAcceptChallenge(challengeId: string) {
     if (!currentUser) {
       if (onStartRegister) {
@@ -594,8 +512,8 @@ function saveWallReadySubmission(params: {
 
       setMessage(
         lang === 'ka'
-          ? 'გამოწვევა მიღებულია. თქვენ გაქვთ სრული 72 საათი.'
-          : 'Challenge accepted. You have 72 hours.'
+          ? 'გამოწვევა მიღებულია. თქვენ გაქვთ სრული 72 საათი TikTok-ზე შესრულებისთვის და ბმულის ჩასასმელად.'
+          : 'Challenge accepted. You have 72 hours to publish on TikTok and submit the link.'
       );
     } catch (error: any) {
       setErrorMessage(
@@ -606,7 +524,7 @@ function saveWallReadySubmission(params: {
       );
     } finally {
       setIsUploading(false);
-      window.setTimeout(() => setMessage(''), 1200);
+      window.setTimeout(() => setMessage(''), 1800);
     }
   }
 
@@ -649,14 +567,18 @@ function saveWallReadySubmission(params: {
 
       saveRecord(records, record);
 
-      await playerService.markChallengeSkipped({
-        playerId: currentUser.id,
-        challengeId,
-        penalty,
-      });
+      try {
+        await playerService.markChallengeSkipped({
+          playerId: currentUser.id,
+          challengeId,
+          penalty,
+        });
+      } catch (error) {
+        console.warn('Skip saved locally only:', error);
+      }
 
       setSelectedChallenge(null);
-      resetUploadForm();
+      resetSubmitForm();
     } catch (error: any) {
       setErrorMessage(
         error?.message ||
@@ -716,261 +638,223 @@ function saveWallReadySubmission(params: {
     return true;
   }
 
-async function handleFormSubmit(event: React.FormEvent) {
-  event.preventDefault();
+  async function handleFormSubmit(event: React.FormEvent) {
+    event.preventDefault();
 
-  if (!currentUser || !selectedChallenge) return;
+    if (!currentUser || !selectedChallenge) return;
 
-  setErrorMessage('');
+    setErrorMessage('');
 
-  const marathonId = normalizeMarathonId(selectedMarathonId);
-  const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
+    const marathonId = normalizeMarathonId(selectedMarathonId);
+    const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
 
-  if (record.completedChallenges.includes(selectedChallenge.id)) {
-    setErrorMessage(
-      lang === 'ka'
-        ? 'ეს გამოწვევა უკვე შესრულებულია.'
-        : 'This challenge has already been completed.'
-    );
-    return;
-  }
-
-  const expired = await applyExpiredPenaltyIfNeeded(selectedChallenge.id);
-
-  if (expired) {
-    setErrorMessage(
-      lang === 'ka'
-        ? 'დედლაინი ამოიწურა. ამ გამოწვევის ატვირთვა აღარ შეიძლება.'
-        : 'The deadline has expired. You can no longer upload this challenge.'
-    );
-    return;
-  }
-
-  if (record.skippedChallenges.includes(selectedChallenge.id)) {
-    setErrorMessage(
-      lang === 'ka'
-        ? 'ეს გამოწვევა აცილებულია. ატვირთვამდე თავიდან მიიღეთ გამოწვევა.'
-        : 'This challenge was skipped. Please accept it again before uploading.'
-    );
-    return;
-  }
-
-  if (!record.acceptedChallenges.includes(selectedChallenge.id)) {
-    setErrorMessage(
-      lang === 'ka'
-        ? 'ატვირთვამდე ჯერ უნდა მიიღოთ გამოწვევა.'
-        : 'Please accept the challenge before uploading.'
-    );
-    return;
-  }
-
-  const timing = record.acceptedDates?.[selectedChallenge.id];
-  const expireAt = typeof timing === 'string' ? timing : timing?.expireAt;
-
-  const submissionType: ChallengeSubmissionType | MediaType = selectedFile
-    ? mediaType
-    : isTextSubmission(selectedChallenge.submissionType)
-      ? (selectedChallenge.submissionType as ChallengeSubmissionType)
-      : ('text' as ChallengeSubmissionType);
-
-  if (!selectedFile && !comment.trim()) {
-    alert(
-      lang === 'ka'
-        ? 'გთხოვთ ჩაწეროთ ტექსტური პასუხი ან ატვირთოთ ფოტო, ვიდეო ან აუდიო.'
-        : 'Please write a text response or upload a photo, video or audio file.'
-    );
-    return;
-  }
-
-  if (!comment.trim()) {
-    alert(
-      lang === 'ka'
-        ? 'გთხოვთ ჩაწეროთ მოკლე კომენტარი ან რეფლექსია.'
-        : 'Please add a short comment or reflection.'
-    );
-    return;
-  }
-
-  setIsUploading(true);
-  setMessage(lang === 'ka' ? 'მიმდინარეობს ატვირთვა...' : 'Uploading...');
-
-  try {
-    const points = calculateCompletionPoints({
-      challenge: selectedChallenge,
-      visibility,
-      expireAt,
-    });
-
-    const localFileUrl = await fileToDataUrl(selectedFile);
-
-    const localDraftSubmission = {
-      id: makeLocalSubmissionId(),
-      playerId: currentUser.id,
-      challengeId: selectedChallenge.id,
-      marathonId,
-      submissionType,
-      visibility,
-      publishToWall: visibility === 'public',
-      publish_to_wall: visibility === 'public',
-      approved: true,
-      comment,
-      reflectionText: comment,
-      textDescription: comment,
-      fileUrl: localFileUrl,
-      videoUrl: localFileUrl,
-      fileName: selectedFile?.name || '',
-      fileMime: selectedFile?.type || '',
-      fileSize: selectedFile?.size || 0,
-      likedBy: [],
-      votedUserIds: [],
-      votes: 0,
-      likes: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    let wallReadySubmission = saveWallReadySubmission({
-      savedSubmission: localDraftSubmission,
-      challenge: selectedChallenge,
-      submissionType,
-      visibility,
-      comment,
-      localFileUrl,
-    });
-
-    const shouldSyncOnline =
-      Boolean(selectedFile) || isTextSubmission(selectedChallenge.submissionType);
-
-    if (shouldSyncOnline) {
-      try {
-        const savedSubmission = await submissionService.createSubmission({
-          playerId: currentUser.id,
-          challengeId: selectedChallenge.id,
-          marathonId,
-          submissionType: submissionType as ChallengeSubmissionType,
-          visibility,
-          comment,
-          reflectionText: comment,
-          file: selectedFile,
-        });
-
-        wallReadySubmission = saveWallReadySubmission({
-          savedSubmission: {
-            ...wallReadySubmission,
-            ...savedSubmission,
-            id: wallReadySubmission.id,
-            remoteId: savedSubmission?.id || wallReadySubmission.remoteId || '',
-            publishToWall: visibility === 'public',
-            publish_to_wall: visibility === 'public',
-          },
-          challenge: selectedChallenge,
-          submissionType,
-          visibility,
-          comment,
-          localFileUrl:
-            localFileUrl ||
-            savedSubmission?.fileUrl ||
-            savedSubmission?.videoUrl ||
-            savedSubmission?.file_url ||
-            savedSubmission?.video_url ||
-            '',
-        });
-      } catch (submissionError) {
-        console.error('Public submission online save failed:', submissionError);
-
-        setMessage(
-          lang === 'ka'
-            ? 'დავალება შეინახა ლოკალურად. Supabase-ში public ჩანაწერის ჩაწერა ვერ მოხერხდა.'
-            : 'Saved locally. Public Supabase submission could not be created.'
-        );
-      }
+    if (record.completedChallenges.includes(selectedChallenge.id)) {
+      setErrorMessage(
+        lang === 'ka'
+          ? 'ეს გამოწვევა უკვე შესრულებულია.'
+          : 'This challenge has already been completed.'
+      );
+      return;
     }
 
-    record.completedChallenges = uniqueList(
-      record.completedChallenges,
-      selectedChallenge.id
-    );
+    const expired = await applyExpiredPenaltyIfNeeded(selectedChallenge.id);
 
-    record.acceptedChallenges = removeFromList(
-      record.acceptedChallenges,
-      selectedChallenge.id
-    );
-
-    record.skippedChallenges = removeFromList(
-      record.skippedChallenges,
-      selectedChallenge.id
-    );
-
-    record.expiredChallenges = removeFromList(
-      record.expiredChallenges,
-      selectedChallenge.id
-    );
-
-    if (visibility === 'public') {
-      record.publicVideos = uniqueList(record.publicVideos, wallReadySubmission.id);
-    } else {
-      record.hiddenVideos = uniqueList(record.hiddenVideos, wallReadySubmission.id);
+    if (expired) {
+      setErrorMessage(
+        lang === 'ka'
+          ? 'დედლაინი ამოიწურა. ამ გამოწვევის ბმულის ჩასმა აღარ შეიძლება.'
+          : 'The deadline has expired. You can no longer submit this challenge.'
+      );
+      return;
     }
 
-    record.points = Math.max(
-      0,
-      (record.points || currentUser.points || 0) + points.totalPoints
-    );
+    if (record.skippedChallenges.includes(selectedChallenge.id)) {
+      setErrorMessage(
+        lang === 'ka'
+          ? 'ეს გამოწვევა აცილებულია. დადასტურებამდე თავიდან მიიღეთ გამოწვევა.'
+          : 'This challenge was skipped. Please accept it again before submitting.'
+      );
+      return;
+    }
 
-    addPointHistory(record, {
-      challengeId: selectedChallenge.id,
-      submissionId: wallReadySubmission.id,
-      amount: points.totalPoints,
-      reason: 'challenge-completed',
-      breakdown: points,
-    });
+    if (!record.acceptedChallenges.includes(selectedChallenge.id)) {
+      setErrorMessage(
+        lang === 'ka'
+          ? 'დადასტურებამდე ჯერ უნდა მიიღოთ გამოწვევა.'
+          : 'Please accept the challenge before submitting.'
+      );
+      return;
+    }
 
-    saveRecord(records, record);
+    const cleanUrl = normalizeSocialUrl(tiktokUrl);
+
+    if (!cleanUrl) {
+      setErrorMessage(
+        lang === 'ka'
+          ? 'გთხოვთ ჩასვათ TikTok ვიდეოს ბმული.'
+          : 'Please paste the TikTok video link.'
+      );
+      return;
+    }
+
+    if (!isValidTikTokUrl(cleanUrl)) {
+      setErrorMessage(
+        lang === 'ka'
+          ? 'ბმული უნდა იყოს TikTok-ის ვიდეოს ბმული, მაგალითად: https://www.tiktok.com/@user/video/123...'
+          : 'The link must be a TikTok video link, for example: https://www.tiktok.com/@user/video/123...'
+      );
+      return;
+    }
+
+    const timing = record.acceptedDates?.[selectedChallenge.id];
+    const expireAt = typeof timing === 'string' ? timing : timing?.expireAt;
+
+    setIsUploading(true);
+    setMessage(lang === 'ka' ? 'მიმდინარეობს შენახვა...' : 'Saving...');
 
     try {
-      await playerService.markChallengeCompleted({
-        playerId: currentUser.id,
-        challengeId: selectedChallenge.id,
-        visibility,
-        gainedPoints: points.totalPoints,
+      const points = calculateCompletionPoints({
+        challenge: selectedChallenge,
+        visibility: 'public',
+        expireAt,
       });
-    } catch (playerUpdateError) {
-      console.warn('Challenge completion saved locally only:', playerUpdateError);
+
+      const now = new Date().toISOString();
+      const submissionId = makeLocalSubmissionId();
+
+      const submission = {
+        id: submissionId,
+        playerId: currentUser.id,
+        userId: currentUser.id,
+        challengeId: selectedChallenge.id,
+        marathonId,
+
+        submissionType: 'tiktok',
+        socialPlatform: 'tiktok',
+        socialUrl: cleanUrl,
+        tiktokUrl: cleanUrl,
+        externalUrl: cleanUrl,
+
+        visibility: 'public',
+        publishToWall: true,
+        publish_to_wall: true,
+        approved: true,
+        status: 'completed',
+        isPublic: true,
+
+        playerNickname: currentUser.nickname || currentUser.firstName || 'მოთამაშე',
+        playerAvatar:
+          currentUser.avatar ||
+          getFallbackAvatar(currentUser.nickname || currentUser.email || currentUser.id),
+
+        challengeTitle: getChallengeTitle(selectedChallenge),
+
+        comment,
+        reflectionText: comment,
+        textDescription: comment,
+
+        fileUrl: '',
+        videoUrl: '',
+        localPreviewUrl: '',
+
+        viewedBy: [],
+        likedBy: [],
+        votedUserIds: [],
+        comments: [],
+        commentPointsGivenBy: [],
+        votes: 0,
+        likes: 0,
+        siteViews: 0,
+        siteLikes: 0,
+        siteComments: 0,
+        engagementPoints: 0,
+
+        basePoints: points.totalPoints,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      safeSaveSubmission(submission);
+
+      record.completedChallenges = uniqueList(
+        record.completedChallenges,
+        selectedChallenge.id
+      );
+
+      record.acceptedChallenges = removeFromList(
+        record.acceptedChallenges,
+        selectedChallenge.id
+      );
+
+      record.skippedChallenges = removeFromList(
+        record.skippedChallenges,
+        selectedChallenge.id
+      );
+
+      record.expiredChallenges = removeFromList(
+        record.expiredChallenges,
+        selectedChallenge.id
+      );
+
+      record.publicVideos = uniqueList(record.publicVideos, submission.id);
+
+      record.points = Math.max(
+        0,
+        (record.points || currentUser.points || 0) + points.totalPoints
+      );
+
+      addPointHistory(record, {
+        challengeId: selectedChallenge.id,
+        submissionId: submission.id,
+        amount: points.totalPoints,
+        reason: 'challenge-completed-tiktok-link',
+        breakdown: points,
+      });
+
+      storageService.saveData(storageKeys.monthlyPlayerRecords, records);
+      saveUserProgressLocally(
+        currentUser,
+        selectedChallenge.id,
+        submission.id,
+        points.totalPoints
+      );
+
+      try {
+        await playerService.markChallengeCompleted({
+          playerId: currentUser.id,
+          challengeId: selectedChallenge.id,
+          visibility: 'public',
+          gainedPoints: points.totalPoints,
+        });
+      } catch (playerUpdateError) {
+        console.warn('Challenge completion saved locally only:', playerUpdateError);
+      }
+
+      setMessage(
+        lang === 'ka'
+          ? `დავალება დადასტურდა TikTok ბმულით! დაემატა +${points.totalPoints} ქულა 🎉`
+          : `Challenge confirmed with TikTok link! +${points.totalPoints} points added 🎉`
+      );
+
+      window.setTimeout(() => {
+        setSelectedChallenge(null);
+        resetSubmitForm();
+        setForceUpdate(prev => prev + 1);
+        onStateUpdate();
+      }, 900);
+    } catch (error: any) {
+      console.error('TikTok submission error:', error);
+
+      setErrorMessage(
+        error?.message ||
+          (lang === 'ka'
+            ? 'TikTok ბმულის შენახვა ვერ მოხერხდა.'
+            : 'Could not save TikTok link.')
+      );
+    } finally {
+      setIsUploading(false);
     }
-
-    setMessage(
-      lang === 'ka'
-        ? `დავალება წარმატებით აიტვირთა! დაემატა +${points.totalPoints} ქულა 🎉${
-            visibility === 'public'
-              ? ' გამოქვეყნდა მთავარ გვერდზე — სიმამაცის საჯარო კედელზე.'
-              : ' შენახულია პირად არქივში.'
-          }`
-        : `Proof submitted! +${points.totalPoints} points added 🎉${
-            visibility === 'public'
-              ? ' Published on the public courage wall.'
-              : ' Saved privately.'
-          }`
-    );
-
-    window.setTimeout(() => {
-      setSelectedChallenge(null);
-      resetUploadForm();
-      setForceUpdate(prev => prev + 1);
-      onStateUpdate();
-    }, 900);
-  } catch (error: any) {
-    console.error('Submission error:', error);
-
-    setErrorMessage(
-      error?.message ||
-        (lang === 'ka'
-          ? 'დავალების ატვირთვა ვერ მოხერხდა.'
-          : 'Could not submit the challenge.')
-    );
-  } finally {
-    setIsUploading(false);
   }
-}
 
   function getChallengeStatus(challenge: Challenge) {
     if (!playerRecord) {
@@ -1035,48 +919,8 @@ async function handleFormSubmit(event: React.FormEvent) {
     };
   }
 
-  function handleDrag(event: React.DragEvent) {
-    event.preventDefault();
-    event.stopPropagation();
-
-    if (event.type === 'dragenter' || event.type === 'dragover') {
-      setIsDragActive(true);
-    }
-
-    if (event.type === 'dragleave') {
-      setIsDragActive(false);
-    }
-  }
-
-  function handleDrop(event: React.DragEvent) {
-    event.preventDefault();
-    event.stopPropagation();
-
-    setIsDragActive(false);
-
-    const file = event.dataTransfer.files?.[0];
-
-    if (!file) return;
-
-    if (filePreviewUrl) {
-      URL.revokeObjectURL(filePreviewUrl);
-    }
-
-    setSelectedFile(file);
-    setFilePreviewUrl(URL.createObjectURL(file));
-    setMediaType(detectMediaType(file));
-  }
-
   return (
     <div className="space-y-5 text-[#27213F] antialiased">
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileChange}
-        accept={getFileAcceptAttribute()}
-        className="hidden"
-      />
-
       {challenges.length === 0 ? (
         <div className="rounded-3xl border border-violet-100 bg-white p-10 text-center text-sm font-bold text-slate-400">
           {lang === 'ka'
@@ -1149,7 +993,7 @@ async function handleFormSubmit(event: React.FormEvent) {
                     </span>
 
                     <span className="rounded-lg bg-[#FFF0E8] px-2.5 py-1 text-[9px] font-bold text-[#FF7A45]">
-                      {lang === 'ka' ? 'დეტალები' : 'Details'}
+                      TikTok
                     </span>
                   </div>
                 </div>
@@ -1166,7 +1010,6 @@ async function handleFormSubmit(event: React.FormEvent) {
           const isAccepted = status.key === 'active' || isCompleted;
           const isSkipped = status.key === 'skipped';
           const isExpired = status.key === 'expired';
-          const needsFile = !isTextSubmission(selectedChallenge.submissionType);
           const basePoints = getBaseChallengePoints(selectedChallenge);
 
           return (
@@ -1177,7 +1020,7 @@ async function handleFormSubmit(event: React.FormEvent) {
                     type="button"
                     onClick={() => {
                       setSelectedChallenge(null);
-                      resetUploadForm();
+                      resetSubmitForm();
                     }}
                     className="absolute right-4 top-4 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-slate-100 font-bold text-slate-400 hover:text-black"
                   >
@@ -1218,7 +1061,7 @@ async function handleFormSubmit(event: React.FormEvent) {
 
                     <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
                       <p className="text-[10px] font-black uppercase text-slate-400">
-                        {lang === 'ka' ? 'კედელზე გამოქვეყნება' : 'Wall publish'}
+                        {lang === 'ka' ? 'TikTok ბმული' : 'TikTok link'}
                       </p>
                       <p className="mt-1 text-sm font-black text-emerald-600">
                         +{POINTS_CONFIG.publicBraveryBonus}
@@ -1253,6 +1096,20 @@ async function handleFormSubmit(event: React.FormEvent) {
                       </p>
                     </div>
                   )}
+
+                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-xs font-bold leading-relaxed text-emerald-800">
+                    <div className="mb-2 flex items-center gap-2">
+                      <Link2 className="h-4 w-4" />
+                      <strong>
+                        {lang === 'ka'
+                          ? 'ახალი წესი: დავალება სრულდება TikTok-ზე'
+                          : 'New rule: the task is completed on TikTok'}
+                      </strong>
+                    </div>
+                    {lang === 'ka'
+                      ? 'ვიდეო ატვირთეთ თქვენს TikTok ანგარიშზე, შემდეგ დაბრუნდით აქ და ჩასვით ვიდეოს ბმული. ქულები, საიტზე ნახვები, გულები და კომენტარები დაითვლება მხოლოდ ამ საიტზე.'
+                      : 'Publish the video on your TikTok account, then return here and paste the video link. Points, site views, likes and comments are counted only inside this website.'}
+                  </div>
 
                   <div className="grid gap-4 md:grid-cols-[1.15fr_0.85fr]">
                     <div className="space-y-3 rounded-2xl border border-violet-50 bg-slate-50 p-4 text-xs leading-relaxed text-slate-700">
@@ -1293,7 +1150,7 @@ async function handleFormSubmit(event: React.FormEvent) {
                         <pre className="whitespace-pre-wrap rounded-xl bg-white p-3 text-[11px] font-bold leading-relaxed text-slate-600">
                           {getScoringText({
                             challenge: selectedChallenge,
-                            visibility,
+                            visibility: 'public',
                             expireAt: selectedTiming?.expireAt,
                             lang,
                           })}
@@ -1335,227 +1192,46 @@ async function handleFormSubmit(event: React.FormEvent) {
                           </div>
                         )}
 
-                        {needsFile && (
-                          <div className="space-y-4">
-                            <div
-                              onDragEnter={handleDrag}
-                              onDragOver={handleDrag}
-                              onDragLeave={handleDrag}
-                              onDrop={handleDrop}
-                              onClick={() => fileInputRef.current?.click()}
-                              className={`flex cursor-pointer flex-col items-center justify-center space-y-2 rounded-2xl border-2 border-dashed p-6 text-center transition-all hover:scale-[1.01] ${
-                                isDragActive
-                                  ? 'border-[#FF9B6A] bg-[#FFF0E8]/50'
-                                  : 'border-violet-200 bg-violet-50/15 hover:border-[#7C4DFF]'
-                              }`}
-                            >
-                              <div
-                                className={`flex h-10 w-10 items-center justify-center rounded-full transition-transform ${
-                                  isDragActive
-                                    ? 'bg-[#FF9B6A]/20 text-[#FF9B6A]'
-                                    : 'bg-violet-100/80 text-[#7C4DFF]'
-                                }`}
-                              >
-                                <UploadCloud className="h-5 w-5" />
-                              </div>
+                        <div className="rounded-2xl border border-violet-100 bg-[#FAF8FF] p-4">
+                          <label className="mb-2 flex items-center gap-2 text-xs font-black text-[#1E1B35]">
+                            <Link2 className="h-4 w-4 text-[#7C4DFF]" />
+                            {lang === 'ka'
+                              ? 'ჩასვით TikTok ვიდეოს ბმული'
+                              : 'Paste the TikTok video link'}
+                          </label>
 
-                              <div>
-                                <p className="text-xs font-black text-[#1E1B35]">
-                                  {lang === 'ka'
-                                    ? isDragActive
-                                      ? 'გადმოუშვით ფაილი აქ!'
-                                      : 'ჩააგდეთ ან აირჩიეთ მედია ფაილი მოწყობილობიდან'
-                                    : isDragActive
-                                      ? 'Drop your file here!'
-                                      : 'Drag & drop or select a media file'}
-                                </p>
+                          <input
+                            type="url"
+                            required
+                            placeholder="https://www.tiktok.com/@username/video/123456789"
+                            value={tiktokUrl}
+                            onChange={event => setTiktokUrl(event.target.value)}
+                            className="w-full rounded-xl border border-violet-100 bg-white p-3 text-xs text-slate-800 focus:border-[#7C4DFF] focus:outline-none"
+                          />
 
-                                <p className="mt-1 text-[10px] font-medium text-slate-400">
-                                  {lang === 'ka'
-                                    ? 'ვიდეო, აუდიო ან ფოტო'
-                                    : 'Video, audio or photo'}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-3 gap-2">
-                              <button
-                                type="button"
-                                onClick={() => triggerFileInput('video')}
-                                className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2 text-xs font-bold transition-all ${
-                                  mediaType === 'video'
-                                    ? 'border-[#7C4DFF] bg-[#F1ECFF] text-[#7C4DFF]'
-                                    : 'border-violet-100 bg-white text-slate-500'
-                                }`}
-                              >
-                                <Video className="h-3.5 w-3.5" />
-                                {lang === 'ka' ? 'ვიდეო' : 'Video'}
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => triggerFileInput('photo')}
-                                className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2 text-xs font-bold transition-all ${
-                                  mediaType === 'photo'
-                                    ? 'border-[#7C4DFF] bg-[#F1ECFF] text-[#7C4DFF]'
-                                    : 'border-violet-100 bg-white text-slate-500'
-                                }`}
-                              >
-                                <Camera className="h-3.5 w-3.5" />
-                                {lang === 'ka' ? 'ფოტო' : 'Photo'}
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => triggerFileInput('audio')}
-                                className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2 text-xs font-bold transition-all ${
-                                  mediaType === 'audio'
-                                    ? 'border-[#7C4DFF] bg-[#F1ECFF] text-[#7C4DFF]'
-                                    : 'border-violet-100 bg-white text-slate-500'
-                                }`}
-                              >
-                                <Mic className="h-3.5 w-3.5" />
-                                {lang === 'ka' ? 'აუდიო' : 'Audio'}
-                              </button>
-                            </div>
-
-                            {filePreviewUrl && (
-                              <div className="relative flex max-h-56 items-center justify-center overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-3 text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (filePreviewUrl) {
-                                      URL.revokeObjectURL(filePreviewUrl);
-                                    }
-
-                                    setFilePreviewUrl('');
-                                    setSelectedFile(null);
-                                  }}
-                                  className="absolute right-2 top-2 z-10 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-black/60 text-xs font-bold text-white hover:bg-black/90"
-                                >
-                                  ✕
-                                </button>
-
-                                {mediaType === 'video' && (
-                                  <video
-                                    src={filePreviewUrl}
-                                    controls
-                                    className="max-h-52 rounded-lg"
-                                  />
-                                )}
-
-                                {mediaType === 'photo' && (
-                                  <img
-                                    src={filePreviewUrl}
-                                    className="max-h-52 rounded-lg object-contain"
-                                    alt="Upload preview"
-                                  />
-                                )}
-
-                                {mediaType === 'audio' && (
-                                  <div className="w-full px-3 py-2 text-white">
-                                    <Volume2 className="mx-auto mb-2 h-6 w-6 animate-pulse text-[#7C4DFF]" />
-                                    <audio
-                                      src={filePreviewUrl}
-                                      controls
-                                      className="w-full"
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
+                          <p className="mt-2 text-[10px] font-medium text-slate-500">
+                            {lang === 'ka'
+                              ? 'სასურველია სრული TikTok ბმული /@username/video/... ფორმატით. მოკლე vm.tiktok.com ბმულიც შეინახება, მაგრამ საიტზე შესაძლოა მხოლოდ ღილაკით გაიხსნას.'
+                              : 'A full /@username/video/... TikTok link is preferred. Short vm.tiktok.com links are saved too, but may open as an external button only.'}
+                          </p>
+                        </div>
 
                         <textarea
-                          required
                           placeholder={
                             lang === 'ka'
-                              ? 'ჩაწერეთ კომენტარი, რეფლექსია ან ემოცია...'
-                              : 'Write comment or reflection...'
+                              ? 'კომენტარი სურვილისამებრ...'
+                              : 'Optional comment...'
                           }
                           value={comment}
                           onChange={event => setComment(event.target.value)}
                           className="h-20 w-full rounded-xl border border-violet-100 bg-[#FAF8FF] p-3 text-xs text-slate-800 focus:border-[#7C4DFF] focus:outline-none"
                         />
 
-                        <div className="space-y-3 border-t border-violet-50 pt-2.5">
-                          <div className="flex items-center justify-between rounded-2xl border border-[#7C4DFF]/10 bg-[#FAF8FF] p-3 transition-all hover:border-[#7C4DFF]/25">
-                            <div className="flex items-start gap-2.5">
-                              <input
-                                id="public-consent"
-                                type="checkbox"
-                                checked={visibility === 'public'}
-                                onChange={event =>
-                                  setVisibility(
-                                    event.target.checked ? 'public' : 'hidden'
-                                  )
-                                }
-                                className="mt-1 h-4 w-4 cursor-pointer rounded border-violet-200 text-[#7C4DFF] focus:ring-[#7C4DFF]"
-                              />
-
-                              <label
-                                htmlFor="public-consent"
-                                className="cursor-pointer select-none text-left"
-                              >
-                                <span className="block text-xs font-black text-[#1E1B35]">
-                                  {lang === 'ka'
-                                    ? 'ვეთანხმები მთავარ გვერდზე გამოქვეყნებას'
-                                    : 'I agree to publish this on the main page'}
-                                </span>
-
-                                <span className="mt-0.5 block text-[10px] font-medium text-slate-400">
-                                  {lang === 'ka'
-                                    ? 'გამოქვეყნდეს მთავარ გვერდზე — სიმამაცის საჯარო კედელზე'
-                                    : 'Publish on the main page — public courage wall'}
-                                </span>
-                              </label>
-                            </div>
-
-                            <span className="shrink-0 rounded-full border border-[#FF9B6A]/10 bg-[#FFF0E8] px-2.5 py-1 text-[10px] font-black text-[#FF9B6A]">
-                              +{POINTS_CONFIG.publicBraveryBonus}{' '}
-                              {lang === 'ka' ? 'ქულა' : 'pts'}
-                            </span>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-2 font-sans text-xs font-bold">
-                            <button
-                              type="button"
-                              onClick={() => setVisibility('public')}
-                              className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2.5 transition-all ${
-                                visibility === 'public'
-                                  ? 'border-emerald-500 bg-emerald-50 text-emerald-600 shadow-sm'
-                                  : 'border-violet-100 bg-white text-slate-400'
-                              }`}
-                            >
-                              <Eye className="h-3.5 w-3.5" />
-                              {lang === 'ka'
-                                ? 'გამოქვეყნება კედელზე'
-                                : 'Publish to wall'}
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => setVisibility('hidden')}
-                              className={`flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border p-2.5 transition-all ${
-                                visibility === 'hidden'
-                                  ? 'border-purple-300 bg-purple-50 text-[#7C4DFF] shadow-sm'
-                                  : 'border-violet-100 bg-white text-slate-400'
-                              }`}
-                            >
-                              <EyeOff className="h-3.5 w-3.5" />
-                              {lang === 'ka'
-                                ? 'პირად არქივში'
-                                : 'Private archive'}
-                            </button>
-                          </div>
-                        </div>
-
                         {selectedPointsPreview && (
                           <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3 text-center text-xs font-black text-emerald-700">
                             {lang === 'ka'
-                              ? `ატვირთვის შემდეგ დაგერიცხებათ +${selectedPointsPreview.totalPoints} ქულა`
-                              : `After upload you will receive +${selectedPointsPreview.totalPoints} points`}
+                              ? `დადასტურების შემდეგ დაგერიცხებათ +${selectedPointsPreview.totalPoints} ქულა`
+                              : `After confirmation you will receive +${selectedPointsPreview.totalPoints} points`}
                           </div>
                         )}
 
@@ -1568,11 +1244,11 @@ async function handleFormSubmit(event: React.FormEvent) {
                             🚀{' '}
                             {isUploading
                               ? lang === 'ka'
-                                ? 'იტვირთება...'
-                                : 'Uploading...'
+                                ? 'ინახება...'
+                                : 'Saving...'
                               : lang === 'ka'
-                                ? 'დაადასტურე და ატვირთე'
-                                : 'Confirm & upload'}
+                                ? 'დაადასტურე TikTok ბმულით'
+                                : 'Confirm with TikTok link'}
                           </button>
 
                           <button
@@ -1624,8 +1300,8 @@ async function handleFormSubmit(event: React.FormEvent) {
 
                         <p className="text-xs font-medium text-slate-500">
                           {lang === 'ka'
-                            ? 'გამოწვევის მიღების შემდეგ სისტემა დაგითვლით ზუსტ 72-საათიან დედლაინს.'
-                            : 'After accepting, the system will calculate your exact 72-hour deadline.'}
+                            ? 'გამოწვევის მიღების შემდეგ სისტემა დაგითვლით ზუსტ 72-საათიან დედლაინს. ვიდეო ატვირთეთ TikTok-ზე და შემდეგ აქ ჩასვით ბმული.'
+                            : 'After accepting, the system will calculate your exact 72-hour deadline. Publish on TikTok and paste the link here.'}
                         </p>
 
                         <div className="flex gap-3">
@@ -1660,8 +1336,8 @@ async function handleFormSubmit(event: React.FormEvent) {
                     <div className="space-y-3 rounded-xl border border-purple-100 bg-purple-50 p-4 text-center text-xs font-medium text-purple-900">
                       <p>
                         {lang === 'ka'
-                          ? 'გამოწვევის მიღება და მტკიცებულების ატვირთვა შესაძლებელია ავტორიზაციის შემდეგ. გაცნობა შეგიძლიათ ახლავე.'
-                          : 'You can read the challenge now, but accepting and uploading proof requires sign in.'}
+                          ? 'გამოწვევის მიღება და TikTok ბმულით შესრულების დადასტურება შესაძლებელია ავტორიზაციის შემდეგ.'
+                          : 'You can accept and confirm the challenge with TikTok link after signing in.'}
                       </p>
 
                       <div className="flex justify-center gap-2">
@@ -1688,6 +1364,19 @@ async function handleFormSubmit(event: React.FormEvent) {
                         </button>
                       </div>
                     </div>
+                  )}
+
+                  {tiktokUrl && isValidTikTokUrl(tiktokUrl) && (
+                    <a
+                      href={tiktokUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center justify-center gap-2 rounded-xl border border-violet-100 bg-white p-3 text-xs font-bold text-[#7C4DFF]"
+                    >
+                      <Eye className="h-4 w-4" />
+                      {lang === 'ka' ? 'TikTok ბმულის შემოწმება' : 'Preview TikTok link'}
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
                   )}
                 </div>
               </div>
