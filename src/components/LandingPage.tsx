@@ -2,12 +2,15 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { User, Submission } from '../types';
 import { getPlayerAvatar } from '../utils/avatarUtils';
 import { storageService, storageKeys } from '../services/storageService';
+import { submissionService } from '../services/submissionService';
 import LiveLeaderboardSidebar from './LiveLeaderboardSidebar';
 import {
   Shield,
   Sparkles,
   Heart,
   Eye,
+  ExternalLink,
+  Music2,
   Compass,
   Flame,
   Paintbrush,
@@ -16,7 +19,6 @@ import {
   Trophy,
   Play,
   ArrowRight,
-  ExternalLink,
   X,
 } from 'lucide-react';
 
@@ -54,7 +56,7 @@ function shortId(id?: string) {
 function getOrCreateGuestVoterId() {
   if (typeof window === 'undefined') return '';
 
-  const existing = localStorage.getItem('bifurcation_guest_voter_id');
+  const existing = localStorage.getItem(GUEST_VOTER_KEY);
 
   if (existing) return existing;
 
@@ -62,21 +64,60 @@ function getOrCreateGuestVoterId() {
     .toString(36)
     .slice(2, 10)}`;
 
-  localStorage.setItem('bifurcation_guest_voter_id', created);
+  localStorage.setItem(GUEST_VOTER_KEY, created);
 
   return created;
 }
 
 const EXTRA_SUBMISSIONS_KEY = 'bifurcation_submissions';
+const LEGACY_SUBMISSIONS_KEY = 'submissions';
+const GUEST_VIEWER_KEY = 'bifurcation_guest_viewer_id';
+const GUEST_VOTER_KEY = 'bifurcation_guest_voter_id';
 
 function getSubmissionStorageKeys() {
   return Array.from(
     new Set(
-      [storageKeys.submissions, EXTRA_SUBMISSIONS_KEY].filter(
+      [storageKeys.submissions, EXTRA_SUBMISSIONS_KEY, LEGACY_SUBMISSIONS_KEY].filter(
         (key): key is string => Boolean(key)
       )
     )
   );
+}
+
+function safeLoadArray(key: string) {
+  try {
+    return storageService.loadData<any[]>(key, []);
+  } catch {
+    try {
+      return JSON.parse(localStorage.getItem(key) || '[]');
+    } catch {
+      return [];
+    }
+  }
+}
+
+function loadLocalSubmissions() {
+  return mergeSubmissions(...getSubmissionStorageKeys().map(key => safeLoadArray(key)));
+}
+
+function getOrCreateGuestViewerId() {
+  if (typeof window === 'undefined') return '';
+
+  const existing = localStorage.getItem(GUEST_VIEWER_KEY);
+
+  if (existing) return existing;
+
+  const created = `guest-viewer-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+
+  localStorage.setItem(GUEST_VIEWER_KEY, created);
+
+  return created;
+}
+
+function getViewerId(currentUser: User | null) {
+  return currentUser?.id || getOrCreateGuestViewerId();
 }
 
 function getSubmissionUrl(submission: any) {
@@ -89,27 +130,34 @@ function getSubmissionUrl(submission: any) {
     submission.external_url ||
     submission.fileUrl ||
     submission.videoUrl ||
-    submission.localPreviewUrl ||
     submission.file_url ||
     submission.video_url ||
-    submission.local_preview_url ||
     ''
   );
 }
 
 function isTikTokSubmission(submission: any) {
-  const type = (submission.submissionType || submission.submission_type || '').toLowerCase();
-  const platform = (submission.socialPlatform || submission.social_platform || '').toLowerCase();
   const url = getSubmissionUrl(submission).toLowerCase();
+  const type = String(submission.submissionType || submission.submission_type || '').toLowerCase();
+  const platform = String(submission.socialPlatform || submission.social_platform || '').toLowerCase();
 
-  return (
-    type === 'tiktok' ||
-    type === 'social' ||
-    platform === 'tiktok' ||
-    url.includes('tiktok.com') ||
-    url.includes('vt.tiktok.com') ||
-    url.includes('vm.tiktok.com')
-  );
+  return type === 'tiktok' || platform === 'tiktok' || url.includes('tiktok.com');
+}
+
+function extractTikTokVideoId(url: string) {
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(/\/video\/(\d+)/);
+
+    return match?.[1] || '';
+  } catch {
+    const match = url.match(/\/video\/(\d+)/);
+    return match?.[1] || '';
+  }
+}
+
+function normalizeTikTokUrl(url: string) {
+  return url.split('?')[0];
 }
 
 function getSubmissionText(submission: any) {
@@ -118,8 +166,6 @@ function getSubmissionText(submission: any) {
     submission.reflectionText ||
     submission.comment ||
     submission.description ||
-    submission.text_description ||
-    submission.reflection_text ||
     ''
   );
 }
@@ -134,167 +180,79 @@ function getSubmissionCreatedAt(submission: any) {
   ).getTime();
 }
 
-function getSubmissionKey(submission: any) {
-  return (
-    submission.id ||
-    submission.remoteId ||
-    submission.remote_id ||
-    `${submission.playerId || submission.player_id || 'player'}-${
-      submission.challengeId || submission.challenge_id || 'challenge'
-    }-${submission.createdAt || submission.created_at || Date.now()}`
-  );
-}
-
 function detectMediaType(submission: any) {
-  const type = (submission.submissionType || submission.submission_type || '').toLowerCase();
+  const type = submission.submissionType || submission.submission_type || '';
   const url = getSubmissionUrl(submission);
 
-  if (isTikTokSubmission(submission)) return 'tiktok';
+  if (isTikTokSubmission(submission)) {
+    return 'tiktok';
+  }
 
-  if (type === 'photo' || url.match(/\.(jpeg|jpg|gif|png|webp|svg|heic|heif)($|\?)/i) || url.startsWith('data:image/')) {
+  if (type === 'photo' || url.match(/\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i) || url.startsWith('data:image/')) {
     return 'photo';
   }
 
-  if (type === 'audio' || url.match(/\.(mp3|wav|ogg|aac|m4a|mpeg)($|\?)/i) || url.startsWith('data:audio/')) {
+  if (type === 'audio' || url.match(/\.(mp3|wav|ogg|aac|m4a)($|\?)/i) || url.startsWith('data:audio/')) {
     return 'audio';
   }
 
-  if (type === 'video' || url.match(/\.(mp4|webm|mov|m4v|quicktime)($|\?)/i) || url.startsWith('data:video/')) {
+  if (type === 'video' || url.match(/\.(mp4|webm|mov|m4v)($|\?)/i) || url.startsWith('data:video/')) {
     return 'video';
   }
 
   if (!url) return 'text';
 
-  return 'link';
+  return 'video';
 }
 
 function mergeSubmissions(...lists: any[][]) {
   const map = new Map<string, any>();
 
   lists.flat().forEach(item => {
-    if (!item) return;
+    if (!item?.id) return;
 
-    const key = getSubmissionKey(item);
-    const previous = map.get(key) || {};
+    const previous = map.get(item.id) || {};
 
-    const likedBy =
-      item.likedBy ||
-      item.liked_by ||
-      item.votedUserIds ||
-      item.voted_user_ids ||
-      previous.likedBy ||
-      previous.liked_by ||
-      previous.votedUserIds ||
-      previous.voted_user_ids ||
-      [];
+    const likedBy = Array.from(
+      new Set([
+        ...(previous.likedBy || []),
+        ...(previous.votedUserIds || []),
+        ...(item.likedBy || []),
+        ...(item.liked_by || []),
+        ...(item.votedUserIds || []),
+        ...(item.voted_user_ids || []),
+      ])
+    );
 
-    const viewedBy =
-      item.viewedBy ||
-      item.viewed_by ||
-      previous.viewedBy ||
-      previous.viewed_by ||
-      [];
+    const viewedBy = Array.from(
+      new Set([
+        ...(previous.viewedBy || []),
+        ...(previous.viewed_by || []),
+        ...(item.viewedBy || []),
+        ...(item.viewed_by || []),
+      ])
+    );
 
-    const comments =
-      item.comments ||
-      previous.comments ||
-      [];
+    const comments = item.comments || previous.comments || [];
 
-    map.set(key, {
+    map.set(item.id, {
       ...previous,
       ...item,
-      id: item.id || previous.id || key,
-      remoteId: item.remoteId || item.remote_id || previous.remoteId || '',
-      playerId: item.playerId || item.player_id || previous.playerId || '',
-      challengeId: item.challengeId || item.challenge_id || previous.challengeId || '',
-      marathonId: item.marathonId || item.marathon_id || previous.marathonId || '',
-      tiktokUrl: item.tiktokUrl || item.tiktok_url || previous.tiktokUrl || '',
-      socialUrl: item.socialUrl || item.social_url || previous.socialUrl || '',
-      externalUrl: item.externalUrl || item.external_url || previous.externalUrl || '',
       likedBy,
-      votedUserIds:
-        item.votedUserIds ||
-        item.voted_user_ids ||
-        likedBy ||
-        previous.votedUserIds ||
-        [],
+      votedUserIds: likedBy,
       viewedBy,
       comments,
-      votes:
-        item.votes ??
-        item.likes ??
-        likedBy.length ??
-        previous.votes ??
-        0,
-      likes:
-        item.likes ??
-        item.votes ??
-        likedBy.length ??
-        previous.likes ??
-        0,
-      siteViews:
-        item.siteViews ??
-        item.site_views ??
-        viewedBy.length ??
-        previous.siteViews ??
-        0,
-      siteComments:
-        item.siteComments ??
-        item.site_comments ??
-        comments.length ??
-        previous.siteComments ??
-        0,
-      createdAt:
-        item.createdAt ||
-        item.created_at ||
-        previous.createdAt ||
-        previous.created_at ||
-        new Date().toISOString(),
-      updatedAt:
-        item.updatedAt ||
-        item.updated_at ||
-        previous.updatedAt ||
-        previous.updated_at ||
-        new Date().toISOString(),
+      votes: item.votes ?? item.likes ?? likedBy.length ?? previous.votes ?? 0,
+      likes: item.likes ?? item.votes ?? likedBy.length ?? previous.likes ?? 0,
+      siteViews: item.siteViews ?? item.site_views ?? viewedBy.length ?? previous.siteViews ?? 0,
+      siteLikes: item.siteLikes ?? item.site_likes ?? likedBy.length ?? previous.siteLikes ?? 0,
+      siteComments: item.siteComments ?? item.site_comments ?? comments.length ?? previous.siteComments ?? 0,
     });
   });
 
   return Array.from(map.values()).sort(
     (a, b) => getSubmissionCreatedAt(b) - getSubmissionCreatedAt(a)
   );
-}
-
-function loadLocalSubmissions() {
-  const lists = getSubmissionStorageKeys().map(key =>
-    storageService.loadData<any[]>(key, [])
-  );
-
-  return mergeSubmissions(...lists);
-}
-
-function saveLocalSubmissions(items: any[]) {
-  for (const key of getSubmissionStorageKeys()) {
-    try {
-      storageService.saveData(key, items);
-    } catch (error) {
-      console.warn(`Could not save submissions to ${key}:`, error);
-    }
-  }
-}
-
-function isPublicSubmission(submission: any) {
-  return (
-    submission.visibility === 'public' ||
-    submission.publishToWall === true ||
-    submission.publish_to_wall === true ||
-    submission.isPublic === true ||
-    submission.is_public === true
-  );
-}
-
-function getViewerId(currentUser?: User | null) {
-  if (currentUser?.id) return currentUser.id;
-  return getOrCreateGuestVoterId();
 }
 
 function buildChallengeLookup(marathons: any[]) {
@@ -334,6 +292,8 @@ export default function LandingPage({
     useState<any | null>(null);
   const [tick, setTick] = useState(0);
   const [voteMessage, setVoteMessage] = useState('');
+  const [commentDraft, setCommentDraft] = useState('');
+  const [commentLoading, setCommentLoading] = useState(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTick(value => value + 1), 60000);
@@ -386,12 +346,19 @@ export default function LandingPage({
     const merged = mergeSubmissions(localSubmissions, submissions || []);
 
     return merged
-      .filter(submission => isPublicSubmission(submission))
+      .filter(submission => {
+        return (
+          submission.visibility === 'public' ||
+          submission.publishToWall === true ||
+          submission.publish_to_wall === true ||
+          submission.isPublic === true ||
+          submission.is_public === true ||
+          submission.status === 'completed'
+        );
+      })
       .map(submission => {
-        const playerId = submission.playerId || submission.player_id;
-        const challengeId = submission.challengeId || submission.challenge_id;
-        const player = allUsers.find(user => user.id === playerId);
-        const challenge = challengeLookup.get(challengeId);
+        const player = allUsers.find(user => user.id === submission.playerId);
+        const challenge = challengeLookup.get(submission.challengeId);
 
         const playerNickname =
           submission.playerNickname ||
@@ -414,53 +381,44 @@ export default function LandingPage({
             : challenge?.title_en || challenge?.title) ||
           (lang === 'ka' ? 'გამოწვევა' : 'Challenge');
 
-        const likedBy =
-          submission.likedBy ||
-          submission.liked_by ||
-          submission.votedUserIds ||
-          submission.voted_user_ids ||
-          [];
-
-        const viewedBy =
-          submission.viewedBy ||
-          submission.viewed_by ||
-          [];
-
-        const comments = submission.comments || [];
-
         return {
           ...submission,
-          playerId,
-          challengeId,
           playerNickname,
           playerAvatar,
           challengeTitle,
-          likedBy,
+          likedBy:
+            submission.likedBy ||
+            submission.liked_by ||
+            submission.votedUserIds ||
+            [],
+          viewedBy: submission.viewedBy || submission.viewed_by || [],
+          comments: submission.comments || [],
           votedUserIds:
             submission.votedUserIds ||
             submission.voted_user_ids ||
-            likedBy,
-          viewedBy,
-          comments,
+            submission.likedBy ||
+            [],
           votes:
             submission.votes ||
             submission.likes ||
-            likedBy.length ||
+            submission.likedBy?.length ||
+            submission.liked_by?.length ||
             0,
           likes:
             submission.likes ||
             submission.votes ||
-            likedBy.length ||
+            submission.likedBy?.length ||
+            submission.liked_by?.length ||
             0,
           siteViews:
             submission.siteViews ||
             submission.site_views ||
-            viewedBy.length ||
+            submission.viewedBy?.length ||
             0,
           siteComments:
             submission.siteComments ||
             submission.site_comments ||
-            comments.length ||
+            submission.comments?.length ||
             0,
         };
       });
@@ -514,40 +472,40 @@ export default function LandingPage({
       title: lang === 'ka' ? 'რეგისტრაცია და ნიკნეიმი' : 'Registration',
       desc:
         lang === 'ka'
-          ? 'თამაშში შემოსასვლელად ქმნით ანგარიშს და იყენებთ ნიკნეიმს. გამოწვევის შესრულება დასტურდება TikTok ვიდეოს ბმულით.'
-          : 'Create an account and use a nickname. Challenge completion is confirmed with a TikTok video link.',
+          ? 'თამაშში შემოსასვლელად ქმნით ანგარიშს და შეგიძლიათ გამოიყენოთ ნიკნეიმი.'
+          : 'Create an account and use a nickname.',
       icon: UserPlus,
     },
     {
       title: lang === 'ka' ? 'მონაწილეობის შეთანხმება' : 'Agreement',
       desc:
         lang === 'ka'
-          ? 'რეგისტრაციისას ადასტურებთ, რომ თამაშობთ ნებაყოფლობით და იცავთ უსაფრთხო, კანონიერი და ღირსეული მონაწილეობის წესებს.'
-          : 'Confirm that participation is voluntary and follows safe, legal and respectful participation rules.',
+          ? 'რეგისტრაციისას ადასტურებთ, რომ თამაშობთ ნებაყოფლობით.'
+          : 'Confirm that participation is voluntary.',
       icon: FileText,
     },
     {
       title: lang === 'ka' ? 'ხილვადობა' : 'Visibility',
       desc:
         lang === 'ka'
-          ? 'შესრულებული დავალება ქვეყნდება TikTok-ზე და საიტზე ჩნდება ბმულის სახით. ქულები ითვლება მხოლოდ საიტის შიდა ნახვებით, გულებით და კომენტარებით.'
-          : 'Completed tasks are published on TikTok and shown on this site as links. Points are calculated only from site views, likes and comments.',
+          ? 'ყოველი დავალებისას ირჩევთ: საჯარო თუ პირადი.'
+          : 'Choose public or private for each submission.',
       icon: Eye,
     },
     {
       title: lang === 'ka' ? 'მხარდაჭერა' : 'Support',
       desc:
         lang === 'ka'
-          ? 'მხარდაჭერა, უნიკალური ნახვა და კომენტარი ითვლება მხოლოდ ამ საიტზე და ზრდის ავტორის თამაშის ქულებს წესების ფარგლებში.'
-          : 'Support, unique views and comments are counted only on this site and can increase the author’s game points within the rules.',
+          ? 'საჯარო დავალებაზე მხარდაჭერა ზრდის ავტორის ქულებს.'
+          : 'Supporting public tasks increases the author’s points.',
       icon: Heart,
     },
     {
       title: lang === 'ka' ? 'ლიდერბორდი' : 'Leaderboard',
       desc:
         lang === 'ka'
-          ? 'რეიტინგში ჩანს ნიკნეიმი, ავატარი, ქულები და პროგრესი. გამარჯვებული იღებს ფულად პრიზს; დონაცია რეიტინგზე არ მოქმედებს.'
-          : 'The leaderboard shows nickname, avatar, points and progress. The winner receives a cash prize; donations never affect ranking.',
+          ? 'რეიტინგში ჩანს არჩეული ნიკნეიმი, ავატარი და ქულები.'
+          : 'The leaderboard shows nickname, avatar, and points.',
       icon: Trophy,
     },
   ];
@@ -608,88 +566,54 @@ export default function LandingPage({
     return found?.challenges || [];
   }
 
-  function updateSubmissionLocally(submissionId: string, updater: (item: any) => any) {
-    const localSubmissions = loadLocalSubmissions();
-    const updated = localSubmissions.map(item => {
-      if (item.id !== submissionId && item.remoteId !== submissionId) {
-        return item;
+  async function handleOpenSubmission(submission: any) {
+    try {
+      const viewerId = getViewerId(currentUser);
+
+      if (viewerId && submissionService.recordView) {
+        const updated = await submissionService.recordView(submission.id, viewerId);
+
+        if (updated) {
+          setActiveMediaSub({ ...submission, ...(updated as any) });
+        } else {
+          setActiveMediaSub(submission);
+        }
+      } else {
+        setActiveMediaSub(submission);
       }
 
-      return updater(item);
-    });
-
-    saveLocalSubmissions(updated);
-    setTick(value => value + 1);
-  }
-
-  function handleOpenSubmission(submission: any) {
-    const viewerId = getViewerId(currentUser);
-
-    if (viewerId) {
-      updateSubmissionLocally(submission.id, item => {
-        const viewedBy = Array.from(
-          new Set([...(item.viewedBy || item.viewed_by || []), viewerId])
-        );
-
-        return {
-          ...item,
-          viewedBy,
-          siteViews: viewedBy.length,
-          updatedAt: new Date().toISOString(),
-        };
-      });
+      setTick(value => value + 1);
+      await onStateUpdate?.();
+    } catch (error) {
+      console.warn('View record failed, opening submission anyway:', error);
+      setActiveMediaSub(submission);
     }
-
-    setActiveMediaSub(submission);
   }
 
   async function handleVoteAction(submission: any) {
     try {
-      const voterId = getViewerId(currentUser);
+      const voterId = currentUser?.id || getOrCreateGuestVoterId();
       setVoteMessage('');
 
-      if (!voterId) {
+      if (submission.playerId === voterId || submission.userId === voterId) {
         throw new Error(
           lang === 'ka'
-            ? 'მხარდაჭერისთვის ვერ შეიქმნა მომხმარებლის იდენტიფიკატორი.'
-            : 'Could not create voter id.'
+            ? 'საკუთარ შესრულებულ გამოწვევაზე მხარდაჭერა არ ითვლება. შესამოწმებლად გამოიყენეთ სხვა ანგარიში ან სტუმრის რეჟიმი.'
+            : 'Your own submission cannot receive your vote. Use another account or guest mode for testing.'
         );
       }
 
-      if (submission.playerId === voterId) {
-        throw new Error(
-          lang === 'ka'
-            ? 'საკუთარ შესრულებულ გამოწვევაზე მხარდაჭერა არ ითვლება.'
-            : 'Your own submission cannot receive your vote.'
+      const updated = await submissionService.voteSubmission(submission.id, voterId);
+
+      if (updated) {
+        setActiveMediaSub((previous: any) =>
+          previous && previous.id === (updated as any).id
+            ? { ...previous, ...(updated as any) }
+            : previous
         );
       }
 
-      updateSubmissionLocally(submission.id, item => {
-        const likedBy = Array.from(
-          new Set([
-            ...(item.likedBy || item.liked_by || []),
-            ...(item.votedUserIds || item.voted_user_ids || []),
-            voterId,
-          ])
-        );
-
-        return {
-          ...item,
-          likedBy,
-          votedUserIds: likedBy,
-          votes: likedBy.length,
-          likes: likedBy.length,
-          siteLikes: likedBy.length,
-          updatedAt: new Date().toISOString(),
-        };
-      });
-
-      try {
-        await onVote(submission.remoteId || submission.id);
-      } catch (error) {
-        console.warn('Online vote failed, local support kept:', error);
-      }
-
+      setTick(value => value + 1);
       await onStateUpdate?.();
 
       setVoteMessage(
@@ -705,6 +629,60 @@ export default function LandingPage({
             ? 'მხარდაჭერა ვერ დაფიქსირდა.'
             : 'Support could not be recorded.')
       );
+    }
+  }
+
+  async function handleCommentAction(submission: any) {
+    try {
+      const text = commentDraft.trim();
+      const authorId = getViewerId(currentUser);
+
+      setVoteMessage('');
+
+      if (!text) {
+        throw new Error(lang === 'ka' ? 'კომენტარი ცარიელია.' : 'Comment is empty.');
+      }
+
+      if (!authorId) {
+        throw new Error(
+          lang === 'ka'
+            ? 'კომენტარისთვის ვერ შეიქმნა მომხმარებლის იდენტიფიკატორი.'
+            : 'Could not create commenter id.'
+        );
+      }
+
+      setCommentLoading(true);
+
+      const updated = await submissionService.addComment(submission.id, {
+        authorId,
+        authorNickname: currentUser?.nickname || (lang === 'ka' ? 'სტუმარი' : 'Guest'),
+        authorAvatar: currentUser?.avatar || '',
+        text,
+      });
+
+      if (updated) {
+        setActiveMediaSub((previous: any) =>
+          previous && previous.id === (updated as any).id
+            ? { ...previous, ...(updated as any) }
+            : previous
+        );
+      }
+
+      setCommentDraft('');
+      setTick(value => value + 1);
+      await onStateUpdate?.();
+
+      setVoteMessage(lang === 'ka' ? 'კომენტარი დაემატა.' : 'Comment added.');
+    } catch (error: any) {
+      console.error(error);
+      setVoteMessage(
+        error?.message ||
+          (lang === 'ka'
+            ? 'კომენტარის დამატება ვერ მოხერხდა.'
+            : 'Could not add comment.')
+      );
+    } finally {
+      setCommentLoading(false);
     }
   }
 
@@ -730,12 +708,59 @@ export default function LandingPage({
     setActiveCabinetTab?.('challenges');
   }
 
+  function renderTikTokEmbed(submission: any) {
+    const url = getSubmissionUrl(submission);
+    const cleanUrl = normalizeTikTokUrl(url);
+    const videoId = extractTikTokVideoId(cleanUrl);
+
+    if (videoId) {
+      return (
+        <div className="mx-auto h-[620px] w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-black">
+          <iframe
+            src={`https://www.tiktok.com/embed/v2/${videoId}`}
+            title="TikTok video"
+            allow="fullscreen"
+            className="h-full w-full border-0 bg-black"
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-slate-950 via-[#111827] to-[#2d0b45] p-6 text-center text-white">
+        <Music2 className="mb-4 h-10 w-10 text-violet-200" />
+        <p className="text-xs font-black uppercase tracking-[0.22em] text-fuchsia-200">
+          TikTok Proof
+        </p>
+        <p className="mt-2 max-w-xs text-xs font-semibold leading-5 text-slate-200">
+          {lang === 'ka'
+            ? 'ამ TikTok ბმულის საიტში ჩასმა ვერ მოხერხდა. გახსენით TikTok-ზე.'
+            : 'This TikTok link could not be embedded. Open it on TikTok.'}
+        </p>
+        {url && (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-5 inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-xs font-black text-[#111827] transition hover:scale-[1.02]"
+          >
+            <ExternalLink className="h-4 w-4" />
+            {lang === 'ka' ? 'TikTok-ზე ნახვა' : 'Open on TikTok'}
+          </a>
+        )}
+      </div>
+    );
+  }
+
   function renderSubmissionMedia(submission: any, mode: 'card' | 'modal') {
     const url = getSubmissionUrl(submission);
     const mediaType = detectMediaType(submission);
-    const text = getSubmissionText(submission);
 
-    if (mediaType === 'tiktok' && url) {
+    if (mediaType === 'tiktok') {
+      if (mode === 'modal') {
+        return renderTikTokEmbed(submission);
+      }
+
       return (
         <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-slate-950 via-[#111827] to-[#2d0b45] p-6 text-center text-white">
           <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 text-2xl shadow-lg">
@@ -748,113 +773,21 @@ export default function LandingPage({
 
           <p className="mt-2 max-w-xs text-xs font-semibold leading-5 text-slate-200">
             {lang === 'ka'
-              ? 'ვიდეო ატვირთულია TikTok-ზე. გახსენი ბმული და შეაფასე შესრულება საიტზე.'
-              : 'The video is hosted on TikTok. Open the link and support it on this site.'}
+              ? 'ვიდეო ატვირთულია TikTok-ზე. გახსენით საიტშივე ან TikTok-ზე.'
+              : 'The video is hosted on TikTok. Open it on this site or on TikTok.'}
           </p>
 
-          {mode === 'modal' && (
-            <a
-              href={url}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-5 inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-xs font-black text-[#111827] transition hover:scale-[1.02]"
-            >
-              <ExternalLink className="h-4 w-4" />
-              {lang === 'ka' ? 'TikTok-ზე ნახვა' : 'Open on TikTok'}
-            </a>
-          )}
-
-          {mode === 'card' && (
-            <span className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white">
-              <ExternalLink className="h-3.5 w-3.5" />
-              {lang === 'ka' ? 'გახსნა' : 'Open'}
-            </span>
-          )}
+          <span className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2 text-[10px] font-black uppercase tracking-widest text-white">
+            <ExternalLink className="h-3.5 w-3.5" />
+            {lang === 'ka' ? 'გახსნა' : 'Open'}
+          </span>
         </div>
       );
     }
 
     if (!url || mediaType === 'text') {
-      return (
-        <div className="flex h-full w-full items-center justify-center bg-slate-950 p-6 text-center text-xs font-semibold text-slate-300">
-          {text || (lang === 'ka' ? 'ტექსტური ჩანაწერი' : 'Text proof')}
-        </div>
-      );
-    }
-
-    if (mediaType === 'photo') {
-      return (
-        <img
-          src={url}
-          className={
-            mode === 'card'
-              ? 'h-full w-full object-cover opacity-90 transition-transform duration-500 group-hover:scale-105'
-              : 'h-full w-full object-contain bg-slate-950'
-          }
-          alt={submission.challengeTitle || 'Submission'}
-          referrerPolicy="no-referrer"
-        />
-      );
-    }
-
-    if (mediaType === 'audio') {
-      return (
-        <div className="flex h-full w-full flex-col items-center justify-center bg-slate-950 p-6 text-center text-white">
-          <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-[#7C4DFF]/20 text-2xl text-[#7C4DFF]">
-            🎵
-          </div>
-
-          {mode === 'modal' ? (
-            <audio src={url} controls autoPlay className="w-full" />
-          ) : (
-            <span className="font-mono text-[10px] font-extrabold uppercase tracking-wider text-purple-300">
-              Audio proof
-            </span>
-          )}
-        </div>
-      );
-    }
-
-    if (mediaType === 'link') {
-      return (
-        <div className="flex h-full w-full flex-col items-center justify-center bg-slate-950 p-6 text-center text-white">
-          <ExternalLink className="mb-3 h-8 w-8 text-violet-300" />
-          <p className="text-xs font-bold text-slate-200">
-            {lang === 'ka' ? 'გარე ბმული' : 'External link'}
-          </p>
-
-          {mode === 'modal' && (
-            <a
-              href={url}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-4 rounded-full bg-white px-5 py-2 text-xs font-black text-slate-950"
-            >
-              {lang === 'ka' ? 'ბმულის გახსნა' : 'Open link'}
-            </a>
-          )}
-        </div>
-      );
-    }
-
-    return (
-      <video
-        src={url}
-        className={
-          mode === 'card'
-            ? 'h-full w-full object-cover opacity-90 transition-transform duration-500 group-hover:scale-105'
-            : 'h-full w-full object-contain bg-slate-950'
-        }
-        controls={mode === 'modal'}
-        autoPlay={mode === 'modal'}
-        muted={mode === 'card'}
-        loop={mode === 'card'}
-        playsInline
-      />
-    );
+      }
   }
-
-
 
   return (
     <div className="min-h-screen w-full overflow-x-hidden bg-[#04020d] font-sans text-slate-100">
@@ -941,8 +874,8 @@ export default function LandingPage({
 
               <p className="text-xs font-light text-[#5E5878] md:text-sm">
                 {lang === 'ka'
-                  ? 'აქ ჩანს TikTok-ზე შესრულებული გამოწვევების ბმულები. ქულები ითვლება მხოლოდ საიტზე მიღებული უნიკალური ნახვებით, გულებით და კომენტარებით.'
-                  : 'TikTok challenge links appear here. Points are counted only from unique site views, likes and comments.'}
+                  ? 'აქ ჩანს მხოლოდ ის შესრულებული გამოწვევები, რომელთა გასაჯაროებაზეც მოთამაშემ თანხმობა მისცა.'
+                  : 'Only submissions marked public by players appear here.'}
               </p>
 
               {voteMessage && (
@@ -962,8 +895,8 @@ export default function LandingPage({
 
                 <p className="mt-2 text-xs font-medium text-[#5E5878]">
                   {lang === 'ka'
-                    ? 'როცა მოთამაშე TikTok ბმულს ჩასვამს, შესრულებული გამოწვევა აქ გამოჩნდება.'
-                    : 'When a player submits a TikTok link, the completed challenge will appear here.'}
+                    ? 'როცა მოთამაშე დავალებას საჯაროდ ატვირთავს, ის აქ გამოჩნდება.'
+                    : 'When a player uploads a public proof, it will appear here.'}
                 </p>
               </div>
             ) : (
@@ -971,7 +904,7 @@ export default function LandingPage({
                 {currentFeedSubmissions.map((sub: any) => {
                   const guestVoterId =
                     typeof window !== 'undefined'
-                      ? localStorage.getItem('bifurcation_guest_voter_id')
+                      ? localStorage.getItem(GUEST_VOTER_KEY)
                       : null;
                   const voterId = currentUser ? currentUser.id : guestVoterId;
                   const likedBy = sub.likedBy || [];
@@ -1018,18 +951,6 @@ export default function LandingPage({
                                 ? 'მოთამაშემ გამოწვევა საჯაროდ შეასრულა.'
                                 : 'The player completed this challenge publicly.')}
                           </p>
-
-                          <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[10px] font-black text-[#5E5878]">
-                            <div className="rounded-xl bg-[#F7F3FF] px-2 py-2">
-                              👁 {sub.siteViews || sub.viewedBy?.length || 0}
-                            </div>
-                            <div className="rounded-xl bg-[#FFF0F6] px-2 py-2">
-                              ❤️ {sub.siteLikes || sub.likedBy?.length || sub.votes || 0}
-                            </div>
-                            <div className="rounded-xl bg-[#EAF8F2] px-2 py-2">
-                              💬 {sub.siteComments || sub.comments?.length || 0}
-                            </div>
-                          </div>
                         </div>
 
                         <div
@@ -1288,15 +1209,13 @@ export default function LandingPage({
 
           const guestVoterId =
             typeof window !== 'undefined'
-              ? localStorage.getItem('bifurcation_guest_voter_id')
+              ? localStorage.getItem(GUEST_VOTER_KEY)
               : null;
 
           const voterId = currentUser ? currentUser.id : guestVoterId;
           const likedBy = liveActiveSub.likedBy || [];
           const hasLiked = Boolean(voterId && likedBy.includes(voterId));
           const voteCount = likedBy.length || liveActiveSub.votes || 0;
-          const viewCount = liveActiveSub.siteViews || liveActiveSub.viewedBy?.length || 0;
-          const commentCount = liveActiveSub.siteComments || liveActiveSub.comments?.length || 0;
 
           return (
             <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
@@ -1349,15 +1268,80 @@ export default function LandingPage({
                       : 'No comment added.')}
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 text-center text-[11px] font-black text-[#27213F]">
-                  <div className="rounded-xl bg-[#F7F3FF] p-2">
-                    👁 {viewCount} {lang === 'ka' ? 'ნახვა' : 'views'}
+                {voteMessage && (
+                  <div className="rounded-xl border border-violet-100 bg-violet-50 p-3 text-xs font-bold text-[#7C4DFF]">
+                    {voteMessage}
                   </div>
-                  <div className="rounded-xl bg-[#FFF0F6] p-2">
-                    ❤️ {voteCount} {lang === 'ka' ? 'გული' : 'likes'}
+                )}
+
+                <div className="grid grid-cols-3 gap-2 text-center text-xs font-black">
+                  <div className="rounded-xl bg-violet-50 p-3 text-violet-700">
+                    👁 {liveActiveSub.viewedBy?.length || liveActiveSub.siteViews || 0}
                   </div>
-                  <div className="rounded-xl bg-[#EAF8F2] p-2">
-                    💬 {commentCount} {lang === 'ka' ? 'კომ.' : 'comments'}
+                  <div className="rounded-xl bg-rose-50 p-3 text-rose-600">
+                    ❤️ {liveActiveSub.likedBy?.length || liveActiveSub.likes || 0}
+                  </div>
+                  <div className="rounded-xl bg-emerald-50 p-3 text-emerald-700">
+                    💬 {liveActiveSub.comments?.length || liveActiveSub.siteComments || 0}
+                  </div>
+                </div>
+
+                <div className="space-y-3 rounded-xl border border-[#E8E2F1] bg-slate-50 p-3">
+                  <div className="flex items-center justify-between">
+                    <strong className="text-xs font-black text-[#27213F]">
+                      {lang === 'ka' ? 'კომენტარები' : 'Comments'}
+                    </strong>
+                    <span className="text-[10px] font-bold text-slate-400">
+                      {liveActiveSub.comments?.length || 0}
+                    </span>
+                  </div>
+
+                  {liveActiveSub.comments?.length ? (
+                    <div className="max-h-32 space-y-2 overflow-y-auto pr-1">
+                      {liveActiveSub.comments.slice(-5).reverse().map((comment: any) => (
+                        <div key={comment.id} className="rounded-lg bg-white p-2 text-xs text-slate-700">
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <span className="font-black text-[#7C4DFF]">
+                              @{comment.authorNickname || comment.authorId || 'guest'}
+                            </span>
+                            <span className="text-[9px] text-slate-400">
+                              {comment.createdAt
+                                ? new Date(comment.createdAt).toLocaleDateString()
+                                : ''}
+                            </span>
+                          </div>
+                          <p className="leading-5">{comment.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs font-medium text-slate-400">
+                      {lang === 'ka' ? 'კომენტარები ჯერ არ არის.' : 'No comments yet.'}
+                    </p>
+                  )}
+
+                  <div className="flex gap-2">
+                    <input
+                      value={commentDraft}
+                      onChange={event => setCommentDraft(event.target.value)}
+                      placeholder={lang === 'ka' ? 'დაწერე კომენტარი...' : 'Write a comment...'}
+                      className="min-w-0 flex-1 rounded-xl border border-violet-100 bg-white px-3 py-2 text-xs text-slate-700 outline-none focus:border-[#7C4DFF]"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => handleCommentAction(liveActiveSub)}
+                      disabled={commentLoading || !commentDraft.trim()}
+                      className="rounded-xl bg-[#7C4DFF] px-4 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {commentLoading
+                        ? lang === 'ka'
+                          ? 'იგზავნება...'
+                          : 'Sending...'
+                        : lang === 'ka'
+                          ? 'დამატება'
+                          : 'Add'}
+                    </button>
                   </div>
                 </div>
 
@@ -1369,7 +1353,7 @@ export default function LandingPage({
                     className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 py-2.5 text-xs font-black text-white transition-all hover:bg-black"
                   >
                     <ExternalLink className="h-4 w-4" />
-                    {lang === 'ka' ? 'TikTok ვიდეოს გახსნა' : 'Open TikTok video'}
+                    {lang === 'ka' ? 'TikTok-ზე გახსნა' : 'Open on TikTok'}
                   </a>
                 )}
 
@@ -1413,7 +1397,7 @@ export default function LandingPage({
 
                 <button
                   type="button"
-                  onClick={() => setActiveMediaSub(null)}
+                  onClick={() => { setActiveMediaSub(null); setVoteMessage(''); setCommentDraft(''); }}
                   className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-slate-100 py-2.5 text-xs font-black text-slate-700 transition-all hover:bg-slate-200"
                 >
                   <X className="h-4 w-4 text-slate-500" />
