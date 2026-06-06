@@ -965,7 +965,7 @@ function AboutPage() {
             </div>
             <h3 className="text-lg font-black text-slate-950">თამაშის ავტორი</h3>
             <p className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm font-semibold text-slate-600">
-              თამაშის ავტორი ჯერ არ არის მითითებული.
+              ნუგზარ კოხრეიძე
             </p>
           </div>
 
