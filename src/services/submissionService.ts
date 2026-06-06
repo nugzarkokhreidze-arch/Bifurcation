@@ -1,4 +1,9 @@
 import { Submission } from '../types';
+import {
+  calculateVoteReceivedBonus,
+  calculateVoterSupportBonus,
+} from './pointsService';
+import { playerService } from './playerService';
 import { supabase } from './supabaseClient';
 import { storageKeys, storageService } from './storageService';
 
@@ -22,6 +27,19 @@ function safeFileName(fileName: string) {
     .replace(/\s+/g, '-')
     .replace(/[^\w.\-ა-ჰ]/g, '')
     .toLowerCase();
+}
+
+function normalizeArray(value: any): string[] {
+  if (Array.isArray(value)) return value;
+
+  if (!value) return [];
+
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function mapSubmissionRow(row: any): Submission {
@@ -48,8 +66,8 @@ function mapSubmissionRow(row: any): Submission {
     createdAt: row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || undefined,
     safetyFlag: row.safety_flag ?? false,
-    votedUserIds: row.voted_user_ids || [],
-    likedBy: row.liked_by || [],
+    votedUserIds: normalizeArray(row.voted_user_ids),
+    likedBy: normalizeArray(row.liked_by),
     playerNickname: row.player_nickname || undefined,
     playerAvatar: row.player_avatar || undefined,
     challengeTitle: row.challenge_title || undefined,
@@ -85,6 +103,42 @@ function submissionToRow(submission: Submission) {
   };
 }
 
+function enrichSubmission(submission: Submission): Submission {
+  const users = storageService.loadData<any[]>(storageKeys.users, []);
+  const marathons = storageService.loadData<any[]>(storageKeys.marathons, []);
+  const player = users.find(user => user.id === submission.playerId);
+
+  const allChallenges = marathons.flatMap(marathon => marathon.challenges || []);
+  const challenge = allChallenges.find(item => item.id === submission.challengeId);
+
+  return {
+    ...submission,
+    playerNickname:
+      submission.playerNickname ||
+      player?.nickname ||
+      player?.firstName ||
+      'მოთამაშე',
+    playerAvatar: submission.playerAvatar || player?.avatar || undefined,
+    challengeTitle:
+      submission.challengeTitle ||
+      challenge?.title ||
+      challenge?.title_en ||
+      undefined,
+  };
+}
+
+function updateLocalSubmissionCache(submission: Submission) {
+  const localSubmissions = storageService.loadData<Submission[]>(
+    storageKeys.submissions,
+    []
+  );
+
+  storageService.saveData(storageKeys.submissions, [
+    submission,
+    ...localSubmissions.filter(item => item.id !== submission.id),
+  ]);
+}
+
 async function uploadFileToSupabase(params: {
   playerId: string;
   challengeId: string;
@@ -114,6 +168,54 @@ async function uploadFileToSupabase(params: {
   };
 }
 
+async function awardVotePoints(params: {
+  authorId: string;
+  voterId: string;
+  submissionId: string;
+  marathonId?: string;
+}) {
+  const authorBonus = calculateVoteReceivedBonus();
+  const voterBonus = calculateVoterSupportBonus();
+
+  try {
+    await playerService.addPoints(
+      params.authorId,
+      authorBonus,
+      'support-received'
+    );
+
+    playerService.addLocalPointHistory({
+      playerId: params.authorId,
+      amount: authorBonus,
+      reason: 'support-received',
+      submissionId: params.submissionId,
+      marathonId: params.marathonId,
+    });
+  } catch (error) {
+    console.warn('Author support points could not be applied:', error);
+  }
+
+  if (params.voterId && params.voterId !== params.authorId) {
+    try {
+      await playerService.addPoints(
+        params.voterId,
+        voterBonus,
+        'support-given'
+      );
+
+      playerService.addLocalPointHistory({
+        playerId: params.voterId,
+        amount: voterBonus,
+        reason: 'support-given',
+        submissionId: params.submissionId,
+        marathonId: params.marathonId,
+      });
+    } catch (error) {
+      console.warn('Voter support points could not be applied:', error);
+    }
+  }
+}
+
 export const submissionService = {
   async getSubmissions(): Promise<Submission[]> {
     try {
@@ -126,7 +228,9 @@ export const submissionService = {
         throw error;
       }
 
-      const submissions = (data || []).map(mapSubmissionRow);
+      const submissions = (data || [])
+        .map(mapSubmissionRow)
+        .map(enrichSubmission);
 
       storageService.saveData(storageKeys.submissions, submissions);
 
@@ -137,8 +241,18 @@ export const submissionService = {
         error
       );
 
-      return storageService.loadData<Submission[]>(storageKeys.submissions, []);
+      return storageService
+        .loadData<Submission[]>(storageKeys.submissions, [])
+        .map(enrichSubmission);
     }
+  },
+
+  async getPublicSubmissions(): Promise<Submission[]> {
+    const submissions = await this.getSubmissions();
+
+    return submissions.filter(
+      submission => submission.visibility === 'public' && submission.approved
+    );
   },
 
   async getSubmissionsByPlayer(playerId: string): Promise<Submission[]> {
@@ -193,7 +307,10 @@ export const submissionService = {
         likes: 0,
         aiReaction:
           'შესანიშნავია! გამოწვევა წარმატებით აიტვირთა და დაემატა საერთო ონლაინ სივრცეში.',
+        aiReaction_en:
+          'Excellent! The challenge proof was uploaded successfully.',
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         safetyFlag: false,
         votedUserIds: [],
         likedBy: [],
@@ -209,17 +326,9 @@ export const submissionService = {
         throw error;
       }
 
-      const savedSubmission = mapSubmissionRow(data);
+      const savedSubmission = enrichSubmission(mapSubmissionRow(data));
 
-      const localSubmissions = storageService.loadData<Submission[]>(
-        storageKeys.submissions,
-        []
-      );
-
-      storageService.saveData(storageKeys.submissions, [
-        savedSubmission,
-        ...localSubmissions.filter(item => item.id !== savedSubmission.id),
-      ]);
+      updateLocalSubmissionCache(savedSubmission);
 
       return savedSubmission;
     } catch (error) {
@@ -228,7 +337,7 @@ export const submissionService = {
         error
       );
 
-      const localSubmission: Submission = {
+      const localSubmission: Submission = enrichSubmission({
         id: makeId('sub-local'),
         playerId: input.playerId,
         challengeId: input.challengeId,
@@ -248,27 +357,25 @@ export const submissionService = {
         likes: 0,
         aiReaction:
           'აქტივობა დროებით შეინახა ლოკალურად. Supabase-ის ჩართვის შემდეგ გადავიტანთ საერთო ბაზაში.',
+        aiReaction_en:
+          'The activity was saved locally for now and will be synced later.',
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         safetyFlag: false,
         votedUserIds: [],
         likedBy: [],
-      };
+      });
 
-      const localSubmissions = storageService.loadData<Submission[]>(
-        storageKeys.submissions,
-        []
-      );
-
-      storageService.saveData(storageKeys.submissions, [
-        localSubmission,
-        ...localSubmissions,
-      ]);
+      updateLocalSubmissionCache(localSubmission);
 
       return localSubmission;
     }
   },
 
-  async voteSubmission(submissionId: string, voterId: string): Promise<Submission> {
+  async voteSubmission(
+    submissionId: string,
+    voterId: string
+  ): Promise<Submission> {
     const localSubmissions = storageService.loadData<Submission[]>(
       storageKeys.submissions,
       []
@@ -277,11 +384,14 @@ export const submissionService = {
     const existing = localSubmissions.find(item => item.id === submissionId);
 
     if (existing?.playerId === voterId) {
-      throw new Error('საკუთარ აქტივობაზე ხმის მიცემა არ შეიძლება.');
+      throw new Error('საკუთარ აქტივობაზე მხარდაჭერა არ შეიძლება.');
     }
 
-    if (existing?.likedBy?.includes(voterId) || existing?.votedUserIds?.includes(voterId)) {
-      throw new Error('ამ აქტივობაზე ხმა უკვე მიცემული გაქვთ.');
+    if (
+      existing?.likedBy?.includes(voterId) ||
+      existing?.votedUserIds?.includes(voterId)
+    ) {
+      throw new Error('ამ აქტივობაზე მხარდაჭერა უკვე გამოხატული გაქვთ.');
     }
 
     try {
@@ -298,7 +408,14 @@ export const submissionService = {
       const currentSubmission = mapSubmissionRow(current);
 
       if (currentSubmission.playerId === voterId) {
-        throw new Error('საკუთარ აქტივობაზე ხმის მიცემა არ შეიძლება.');
+        throw new Error('საკუთარ აქტივობაზე მხარდაჭერა არ შეიძლება.');
+      }
+
+      if (
+        currentSubmission.likedBy?.includes(voterId) ||
+        currentSubmission.votedUserIds?.includes(voterId)
+      ) {
+        throw new Error('ამ აქტივობაზე მხარდაჭერა უკვე გამოხატული გაქვთ.');
       }
 
       const likedBy = Array.from(
@@ -328,14 +445,16 @@ export const submissionService = {
         throw error;
       }
 
-      const updatedSubmission = mapSubmissionRow(data);
+      const updatedSubmission = enrichSubmission(mapSubmissionRow(data));
 
-      storageService.saveData(
-        storageKeys.submissions,
-        localSubmissions.map(item =>
-          item.id === submissionId ? updatedSubmission : item
-        )
-      );
+      updateLocalSubmissionCache(updatedSubmission);
+
+      await awardVotePoints({
+        authorId: updatedSubmission.playerId,
+        voterId,
+        submissionId: updatedSubmission.id,
+        marathonId: updatedSubmission.marathonId,
+      });
 
       return updatedSubmission;
     } catch (error) {
@@ -353,21 +472,23 @@ export const submissionService = {
         new Set([...(existing.votedUserIds || []), voterId])
       );
 
-      const updatedSubmission: Submission = {
+      const updatedSubmission: Submission = enrichSubmission({
         ...existing,
         likedBy,
         votedUserIds,
         votes: votedUserIds.length,
         likes: votedUserIds.length,
         updatedAt: new Date().toISOString(),
-      };
+      });
 
-      storageService.saveData(
-        storageKeys.submissions,
-        localSubmissions.map(item =>
-          item.id === submissionId ? updatedSubmission : item
-        )
-      );
+      updateLocalSubmissionCache(updatedSubmission);
+
+      await awardVotePoints({
+        authorId: updatedSubmission.playerId,
+        voterId,
+        submissionId: updatedSubmission.id,
+        marathonId: updatedSubmission.marathonId,
+      });
 
       return updatedSubmission;
     }
