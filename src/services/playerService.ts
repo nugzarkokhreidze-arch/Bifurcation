@@ -1,29 +1,95 @@
 import { User } from '../types';
+import { clampPoints } from './pointsService';
 import { supabase } from './supabaseClient';
 import { storageKeys, storageService } from './storageService';
 
 function createFallbackAvatar(nickname: string) {
-  return `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(nickname)}`;
+  return `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(
+    nickname || 'player'
+  )}`;
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+}
+
+function normalizeJsonArray(value: any): any[] {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function createLocalFallbackUser(playerId: string, updateData: Partial<User>): User {
+  const nickname =
+    updateData.nickname ||
+    updateData.email ||
+    playerId.slice(0, 8) ||
+    'მოთამაშე';
+
+  return {
+    id: playerId,
+    firstName: updateData.firstName || '',
+    lastName: updateData.lastName || '',
+    email: updateData.email || '',
+    phone: updateData.phone || '',
+    nickname,
+    points: updateData.points ?? 100,
+    avatar: updateData.avatar || createFallbackAvatar(nickname),
+    fictionalNameEnabled: updateData.fictionalNameEnabled ?? true,
+    status: updateData.status || 'active',
+    consentAccepted: updateData.consentAccepted ?? true,
+    consentDate: updateData.consentDate || new Date().toISOString(),
+    completedChallenges: updateData.completedChallenges || [],
+    hiddenChallenges: updateData.hiddenChallenges || [],
+    publicChallenges: updateData.publicChallenges || [],
+    skippedChallenges: updateData.skippedChallenges || [],
+    votesReceived: updateData.votesReceived || 0,
+    braveryBonuses: updateData.braveryBonuses || 0,
+    coachQuestionsRemaining: updateData.coachQuestionsRemaining ?? 3,
+    videoCallAvailable: updateData.videoCallAvailable ?? true,
+    banned: updateData.banned ?? false,
+    banReason: updateData.banReason || '',
+    isAdmin: updateData.isAdmin ?? false,
+    badges: updateData.badges || [],
+    achievements: updateData.achievements || [],
+    streakCount: updateData.streakCount || 1,
+    lastActiveDate:
+      updateData.lastActiveDate || new Date().toISOString().split('T')[0],
+    preferredLanguage: updateData.preferredLanguage || 'ka',
+    notifications: updateData.notifications || [],
+    createdAt: updateData.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 function mapPlayerRowToUser(row: any): User {
+  const nickname = row.nickname || row.email || 'მოთამაშე';
+
   return {
     id: row.id,
     firstName: row.first_name || '',
     lastName: row.last_name || '',
     email: row.email || '',
     phone: row.phone || '',
-    nickname: row.nickname || 'მოთამაშე',
+    nickname,
     points: row.points ?? 100,
-    avatar: row.avatar || createFallbackAvatar(row.nickname || row.email || 'player'),
+    avatar: row.avatar || createFallbackAvatar(nickname),
     fictionalNameEnabled: row.fictional_name_enabled ?? true,
     status: row.status || 'active',
     consentAccepted: row.consent_accepted ?? false,
     consentDate: row.consent_date || undefined,
-    completedChallenges: row.completed_challenges || [],
-    hiddenChallenges: row.hidden_challenges || [],
-    publicChallenges: row.public_challenges || [],
-    skippedChallenges: row.skipped_challenges || [],
+    completedChallenges: normalizeJsonArray(row.completed_challenges),
+    hiddenChallenges: normalizeJsonArray(row.hidden_challenges),
+    publicChallenges: normalizeJsonArray(row.public_challenges),
+    skippedChallenges: normalizeJsonArray(row.skipped_challenges),
     votesReceived: row.votes_received ?? 0,
     braveryBonuses: row.bravery_bonuses ?? 0,
     coachQuestionsRemaining: row.coach_questions_remaining ?? 3,
@@ -31,12 +97,12 @@ function mapPlayerRowToUser(row: any): User {
     banned: row.banned ?? false,
     banReason: row.ban_reason || undefined,
     isAdmin: row.is_admin ?? false,
-    badges: row.badges || [],
-    achievements: row.achievements || [],
+    badges: normalizeJsonArray(row.badges),
+    achievements: normalizeJsonArray(row.achievements),
     streakCount: row.streak_count ?? 0,
     lastActiveDate: row.last_active_date || undefined,
     preferredLanguage: row.preferred_language || 'ka',
-    notifications: row.notifications || [],
+    notifications: normalizeJsonArray(row.notifications),
     createdAt: row.created_at || undefined,
     updatedAt: row.updated_at || undefined,
   };
@@ -52,36 +118,55 @@ function userUpdateToPlayerRow(updateData: Partial<User>) {
   if (updateData.email !== undefined) row.email = updateData.email;
   if (updateData.phone !== undefined) row.phone = updateData.phone;
   if (updateData.nickname !== undefined) row.nickname = updateData.nickname;
-  if (updateData.points !== undefined) row.points = updateData.points;
+  if (updateData.points !== undefined) row.points = clampPoints(updateData.points);
   if (updateData.avatar !== undefined) row.avatar = updateData.avatar;
+
   if (updateData.fictionalNameEnabled !== undefined) {
     row.fictional_name_enabled = updateData.fictionalNameEnabled;
   }
+
   if (updateData.status !== undefined) row.status = updateData.status;
+
   if (updateData.consentAccepted !== undefined) {
     row.consent_accepted = updateData.consentAccepted;
   }
-  if (updateData.consentDate !== undefined) row.consent_date = updateData.consentDate;
+
+  if (updateData.consentDate !== undefined) {
+    row.consent_date = updateData.consentDate;
+  }
+
   if (updateData.completedChallenges !== undefined) {
     row.completed_challenges = updateData.completedChallenges;
   }
+
   if (updateData.hiddenChallenges !== undefined) {
     row.hidden_challenges = updateData.hiddenChallenges;
   }
+
   if (updateData.publicChallenges !== undefined) {
     row.public_challenges = updateData.publicChallenges;
   }
+
   if (updateData.skippedChallenges !== undefined) {
     row.skipped_challenges = updateData.skippedChallenges;
   }
-  if (updateData.votesReceived !== undefined) row.votes_received = updateData.votesReceived;
-  if (updateData.braveryBonuses !== undefined) row.bravery_bonuses = updateData.braveryBonuses;
+
+  if (updateData.votesReceived !== undefined) {
+    row.votes_received = updateData.votesReceived;
+  }
+
+  if (updateData.braveryBonuses !== undefined) {
+    row.bravery_bonuses = updateData.braveryBonuses;
+  }
+
   if (updateData.coachQuestionsRemaining !== undefined) {
     row.coach_questions_remaining = updateData.coachQuestionsRemaining;
   }
+
   if (updateData.videoCallAvailable !== undefined) {
     row.video_call_available = updateData.videoCallAvailable;
   }
+
   if (updateData.banned !== undefined) row.banned = updateData.banned;
   if (updateData.banReason !== undefined) row.ban_reason = updateData.banReason;
   if (updateData.isAdmin !== undefined) row.is_admin = updateData.isAdmin;
@@ -89,28 +174,52 @@ function userUpdateToPlayerRow(updateData: Partial<User>) {
   if (updateData.achievements !== undefined) row.achievements = updateData.achievements;
   if (updateData.streakCount !== undefined) row.streak_count = updateData.streakCount;
   if (updateData.lastActiveDate !== undefined) row.last_active_date = updateData.lastActiveDate;
+
   if (updateData.preferredLanguage !== undefined) {
     row.preferred_language = updateData.preferredLanguage;
   }
-  if (updateData.notifications !== undefined) row.notifications = updateData.notifications;
+
+  if (updateData.notifications !== undefined) {
+    row.notifications = updateData.notifications;
+  }
 
   return row;
 }
 
+function mergeUnique(list: string[] = [], item: string) {
+  return Array.from(new Set([...list, item]));
+}
+
 export const playerService = {
   async getPlayerById(playerId: string): Promise<User> {
+    const localPlayers = storageService.loadData<User[]>(storageKeys.users, []);
+    const localCurrentUser = storageService.loadData<User | null>(
+      storageKeys.currentUser,
+      null
+    );
+
+    const localMatch =
+      localPlayers.find(user => user.id === playerId) ||
+      (localCurrentUser?.id === playerId ? localCurrentUser : null);
+
     try {
+      if (!isUuid(playerId)) {
+        if (localMatch) return localMatch;
+        throw new Error('Local player id is not a Supabase UUID.');
+      }
+
       const { data, error } = await supabase
         .from('players')
         .select('*')
         .eq('id', playerId)
-        .single();
+        .maybeSingle();
 
       if (error) {
         throw error;
       }
 
       if (!data) {
+        if (localMatch) return localMatch;
         throw new Error('მოთამაშე Supabase-ში ვერ მოიძებნა.');
       }
 
@@ -123,14 +232,9 @@ export const playerService = {
         error
       );
 
-      const localPlayers = storageService.loadData<User[]>(storageKeys.users, []);
-      const match = localPlayers.find(user => user.id === playerId);
+      if (localMatch) return localMatch;
 
-      if (!match) {
-        throw new Error('მოთამაშის პროფილი ვერ მოიძებნა.');
-      }
-
-      return match;
+      throw new Error('მოთამაშის პროფილი ვერ მოიძებნა.');
     }
   },
 
@@ -160,21 +264,50 @@ export const playerService = {
 
   async updatePlayer(playerId: string, updateData: Partial<User>): Promise<User> {
     const localPlayers = storageService.loadData<User[]>(storageKeys.users, []);
-    const existingLocalUser = localPlayers.find(user => user.id === playerId);
+    const localCurrentUser = storageService.loadData<User | null>(
+      storageKeys.currentUser,
+      null
+    );
 
-    const optimisticUser = existingLocalUser
-      ? {
-          ...existingLocalUser,
-          ...updateData,
-          updatedAt: new Date().toISOString(),
-        }
-      : null;
+    const existingLocalUser =
+      localPlayers.find(user => user.id === playerId) ||
+      (localCurrentUser?.id === playerId ? localCurrentUser : null);
 
-    if (optimisticUser) {
-      this._updateLocalCache(optimisticUser);
-    }
+    const baseUser =
+      existingLocalUser || createLocalFallbackUser(playerId, updateData);
+
+    const optimisticUser: User = {
+      ...baseUser,
+      ...updateData,
+      points:
+        updateData.points !== undefined
+          ? clampPoints(updateData.points)
+          : clampPoints(baseUser.points || 0),
+      completedChallenges:
+        updateData.completedChallenges || baseUser.completedChallenges || [],
+      hiddenChallenges:
+        updateData.hiddenChallenges || baseUser.hiddenChallenges || [],
+      publicChallenges:
+        updateData.publicChallenges || baseUser.publicChallenges || [],
+      skippedChallenges:
+        updateData.skippedChallenges || baseUser.skippedChallenges || [],
+      badges: updateData.badges || baseUser.badges || [],
+      achievements: updateData.achievements || baseUser.achievements || [],
+      notifications: updateData.notifications || baseUser.notifications || [],
+      updatedAt: new Date().toISOString(),
+    };
+
+    this._updateLocalCache(optimisticUser);
 
     try {
+      if (!isUuid(playerId)) {
+        console.warn(
+          'Skipping Supabase player update because player id is not UUID:',
+          playerId
+        );
+        return optimisticUser;
+      }
+
       const supabaseUpdate = userUpdateToPlayerRow(updateData);
 
       const { data, error } = await supabase
@@ -182,14 +315,14 @@ export const playerService = {
         .update(supabaseUpdate)
         .eq('id', playerId)
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) {
         throw error;
       }
 
       if (!data) {
-        throw new Error('მოთამაშის განახლებული პროფილი ვერ დაბრუნდა.');
+        return optimisticUser;
       }
 
       const updatedUser = mapPlayerRowToUser(data);
@@ -198,23 +331,74 @@ export const playerService = {
       return updatedUser;
     } catch (error) {
       console.warn(
-        'Supabase player update failed. Local fallback saved only:',
+        'Supabase player update failed. Local fallback saved and returned:',
         error
       );
 
-      if (optimisticUser) {
-        return optimisticUser;
-      }
-
-      throw new Error('მოთამაშის განახლება ვერ მოხერხდა.');
+      return optimisticUser;
     }
   },
 
-  async addPoints(playerId: string, amount: number): Promise<User> {
+  async addPoints(
+    playerId: string,
+    amount: number,
+    reason = 'points-update'
+  ): Promise<User> {
     const user = await this.getPlayerById(playerId);
+    const nextPoints = clampPoints((user.points || 0) + amount);
 
-    return this.updatePlayer(playerId, {
-      points: (user.points || 0) + amount,
+    const updated = await this.updatePlayer(playerId, {
+      points: nextPoints,
+    });
+
+    this.addLocalPointHistory({
+      playerId,
+      amount,
+      reason,
+    });
+
+    return updated;
+  },
+
+  async markChallengeCompleted(params: {
+    playerId: string;
+    challengeId: string;
+    visibility: 'public' | 'hidden';
+    gainedPoints: number;
+  }): Promise<User> {
+    const user = await this.getPlayerById(params.playerId);
+
+    return this.updatePlayer(params.playerId, {
+      points: clampPoints((user.points || 0) + params.gainedPoints),
+      completedChallenges: mergeUnique(
+        user.completedChallenges || [],
+        params.challengeId
+      ),
+      publicChallenges:
+        params.visibility === 'public'
+          ? mergeUnique(user.publicChallenges || [], params.challengeId)
+          : user.publicChallenges || [],
+      hiddenChallenges:
+        params.visibility === 'hidden'
+          ? mergeUnique(user.hiddenChallenges || [], params.challengeId)
+          : user.hiddenChallenges || [],
+      braveryBonuses:
+        params.visibility === 'public'
+          ? (user.braveryBonuses || 0) + 15
+          : user.braveryBonuses || 0,
+    });
+  },
+
+  async markChallengeSkipped(params: {
+    playerId: string;
+    challengeId: string;
+    penalty: number;
+  }): Promise<User> {
+    const user = await this.getPlayerById(params.playerId);
+
+    return this.updatePlayer(params.playerId, {
+      points: clampPoints((user.points || 0) + params.penalty),
+      skippedChallenges: mergeUnique(user.skippedChallenges || [], params.challengeId),
     });
   },
 
@@ -238,6 +422,33 @@ export const playerService = {
       achievements: user.achievements || [],
       notifications: user.notifications || [],
     };
+  },
+
+  addLocalPointHistory(params: {
+    playerId: string;
+    amount: number;
+    reason: string;
+    challengeId?: string;
+    submissionId?: string;
+    marathonId?: string;
+  }) {
+    const transactions = storageService.loadData<any[]>(
+      storageKeys.pointTransactions,
+      []
+    );
+
+    transactions.unshift({
+      id: `pt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      playerId: params.playerId,
+      amount: params.amount,
+      reason: params.reason,
+      challengeId: params.challengeId,
+      submissionId: params.submissionId,
+      marathonId: params.marathonId,
+      createdAt: new Date().toISOString(),
+    });
+
+    storageService.saveData(storageKeys.pointTransactions, transactions);
   },
 
   _updateLocalCache(user: User): void {
