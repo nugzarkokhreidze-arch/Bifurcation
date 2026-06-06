@@ -133,7 +133,7 @@ export default function App() {
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
-  const [, setUsers] = useState<User[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [marathons, setMarathons] = useState<Marathon[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [monthlyPlayerRecords, setMonthlyPlayerRecords] = useState<any[]>([]);
