@@ -6,6 +6,7 @@ import {
 } from 'react';
 import {
   Home,
+  Info,
   LogOut,
   PlayCircle,
   UserPlus,
@@ -24,7 +25,7 @@ import { playerService } from './services/playerService';
 import { submissionService } from './services/submissionService';
 import { storageKeys, storageService } from './services/storageService';
 
-type Tab = 'home' | 'challenges' | 'profile';
+type Tab = 'home' | 'challenges' | 'about' | 'profile';
 
 type AuthMode = 'login' | 'register';
 
@@ -502,6 +503,7 @@ export default function App() {
   const nav: { id: Tab; label: string; icon: ReactNode }[] = [
     { id: 'home', label: 'მთავარი', icon: <Home size={18} /> },
     { id: 'challenges', label: 'ჩემი კაბინეტი', icon: <PlayCircle size={18} /> },
+    { id: 'about', label: 'ჩვენ შესახებ', icon: <Info size={18} /> },
     {
       id: 'profile',
       label: currentUser ? 'პროფილი' : 'შესვლა',
@@ -634,6 +636,8 @@ export default function App() {
         />
       ) : (
         <main className="mx-auto max-w-7xl px-4 py-8">
+          {tab === 'about' && <AboutPage />}
+
           {tab === 'challenges' && (
             <PlayerCabinet
               currentUser={currentUser}
@@ -828,32 +832,64 @@ export default function App() {
                 )}
               </div>
 
-              <div className="rounded-[2rem] bg-white p-6 shadow-xl">
-                <SectionTitle
-                  title="Backup"
-                  subtitle="სატესტო რეჟიმში შეგიძლიათ მონაცემების ასლის ჩამოტვირთვა ან აღდგენა."
-                />
-
-                <button
-                  type="button"
-                  onClick={handleDownloadBackup}
-                  className="w-full rounded-2xl bg-slate-950 px-5 py-3 font-black text-white"
-                >
-                  Backup ჩამოტვირთვა
-                </button>
-
-                <label className="mt-3 block cursor-pointer rounded-2xl border border-dashed p-5 text-center font-bold text-slate-600">
-                  Backup ატვირთვა
-                  <input
-                    type="file"
-                    accept="application/json"
-                    className="hidden"
-                    onChange={event =>
-                      event.target.files?.[0] &&
-                      handleRestoreBackup(event.target.files[0])
-                    }
+              <div className="space-y-6">
+                <div className="rounded-[2rem] border border-amber-100 bg-gradient-to-br from-amber-50 via-white to-violet-50 p-6 shadow-xl">
+                  <SectionTitle
+                    title="პრიზი და მხარდაჭერა"
+                    subtitle="თამაში უფასოა, გამარჯვებული კი იღებს ფულად პრიზს."
                   />
-                </label>
+
+                  <div className="space-y-3 text-sm leading-7 text-slate-600">
+                    <p>
+                      „ბიფურკაციაში“ გამარჯვებული ვლინდება მხოლოდ თამაშის ქულებით:
+                      შესრულებული გამოწვევებით, საიტზე მიღებული უნიკალური ნახვებით,
+                      გულებითა და კომენტარებით.
+                    </p>
+
+                    <p className="rounded-2xl bg-white/80 p-4 font-bold text-slate-700">
+                      ნებაყოფლობითი დონაცია არ ზრდის ქულებს, არ ცვლის რეიტინგს და
+                      არ იძლევა თამაშში უპირატესობას. ის არის საზოგადოების მხარდაჭერა,
+                      რომ თამაში გაგრძელდეს, ფულადი პრიზი შენარჩუნდეს და RICDOG-მა
+                      შექმნას მეტი საინტერესო საგანმანათლებლო პროგრამა.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setTab('about')}
+                    className="mt-5 w-full rounded-2xl bg-gradient-to-r from-violet-700 to-fuchsia-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-violet-900/20"
+                  >
+                    💜 როგორ დავუჭირო მხარი პროექტს?
+                  </button>
+                </div>
+
+                <div className="rounded-[2rem] bg-white p-6 shadow-xl">
+                  <SectionTitle
+                    title="Backup"
+                    subtitle="სატესტო რეჟიმში შეგიძლიათ მონაცემების ასლის ჩამოტვირთვა ან აღდგენა."
+                  />
+
+                  <button
+                    type="button"
+                    onClick={handleDownloadBackup}
+                    className="w-full rounded-2xl bg-slate-950 px-5 py-3 font-black text-white"
+                  >
+                    Backup ჩამოტვირთვა
+                  </button>
+
+                  <label className="mt-3 block cursor-pointer rounded-2xl border border-dashed p-5 text-center font-bold text-slate-600">
+                    Backup ატვირთვა
+                    <input
+                      type="file"
+                      accept="application/json"
+                      className="hidden"
+                      onChange={event =>
+                        event.target.files?.[0] &&
+                        handleRestoreBackup(event.target.files[0])
+                      }
+                    />
+                  </label>
+                </div>
               </div>
             </section>
           )}
@@ -877,3 +913,191 @@ function SectionTitle({
     </div>
   );
 }
+
+
+function AboutPage() {
+  return (
+    <section className="mx-auto max-w-5xl space-y-8">
+      <div className="overflow-hidden rounded-[2rem] bg-[#15123A] p-8 text-white shadow-xl md:p-12">
+        <div className="grid gap-8 md:grid-cols-[1.2fr_0.8fr] md:items-center">
+          <div>
+            <p className="mb-4 inline-flex rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-widest text-violet-200">
+              პლატფორმის შესახებ
+            </p>
+
+            <h2 className="text-3xl font-black leading-tight md:text-4xl">
+              ბიფურკაციის შესახებ
+            </h2>
+
+            <p className="mt-4 max-w-2xl text-sm leading-7 text-violet-100">
+              თამაში პიროვნული გამბედაობის, სიმამაცისა და შემოქმედებითი თვითგამოხატვისთვის.
+              მონაწილეები იღებენ უსაფრთხო გამოწვევებს, ასრულებენ მათ TikTok-ზე და
+              აგროვებენ ქულებს საიტზე მიღებული ნახვებით, გულებითა და კომენტარებით.
+              თამაში უფასოა, ხოლო გამარჯვებული იღებს ფულად პრიზს.
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-white/10 bg-white/8 p-5">
+            <div className="relative h-48 overflow-hidden rounded-2xl bg-[#0b0924]">
+              <div className="absolute left-8 top-24 h-28 w-2 rounded-full bg-violet-400" />
+              <div className="absolute left-8 top-24 h-3 w-36 rotate-[-7deg] rounded-full bg-violet-500/30" />
+              <div className="absolute left-8 top-24 h-3 w-40 rotate-[-35deg] rounded-full bg-slate-600/40" />
+              <div className="absolute left-8 top-24 h-3 w-44 rotate-[-58deg] rounded-full bg-slate-700/40" />
+              <div className="absolute left-8 top-24 h-3 w-44 origin-left rotate-[-58deg] rounded-full bg-gradient-to-r from-violet-500 via-pink-500 to-amber-400 shadow-[0_0_30px_rgba(236,72,153,0.45)]" />
+              <div className="absolute left-[2.9rem] top-[5.8rem] h-5 w-5 rounded-full bg-violet-300" />
+              <div className="absolute right-12 top-8 h-8 w-8 rounded-full bg-amber-400 shadow-[0_0_25px_rgba(251,191,36,0.7)]" />
+              <div className="absolute right-10 top-5 text-[10px] font-black text-amber-300">
+                # BIFURCATION
+              </div>
+              <div className="absolute left-2 top-24 text-[9px] font-black uppercase tracking-widest text-slate-500">
+                Comfort
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-[0.85fr_1.15fr]">
+        <div className="space-y-6">
+          <div className="rounded-3xl border border-violet-100 bg-white p-6 shadow-sm">
+            <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-2xl bg-violet-100 text-violet-700">
+              👤
+            </div>
+            <h3 className="text-lg font-black text-slate-950">თამაშის ავტორი</h3>
+            <p className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm font-semibold text-slate-600">
+              თამაშის ავტორი ჯერ არ არის მითითებული.
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-violet-100 bg-white p-6 shadow-sm">
+            <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
+              🌐
+            </div>
+            <h3 className="text-lg font-black text-slate-950">ვებგვერდი</h3>
+            <a
+              href="https://www.ricdog.org"
+              target="_blank"
+              rel="noreferrer"
+              className="mt-4 inline-flex items-center gap-2 text-sm font-black text-violet-700 hover:text-violet-900"
+            >
+              www.ricdog.org →
+            </a>
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-violet-100 bg-white p-6 shadow-sm">
+          <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
+            👥
+          </div>
+
+          <h3 className="text-xl font-black text-slate-950">
+            პროექტის განმახორციელებელი ორგანიზაცია
+          </h3>
+
+          <p className="mt-2 text-xs font-bold uppercase tracking-widest text-slate-400">
+            კვლევა-ინტელექტუალური კლუბი „თაობათა დიალოგი“ — RICDOG
+          </p>
+
+          <div className="mt-6 space-y-4 text-sm leading-7 text-slate-600">
+            <p>
+              პროექტის განმახორციელებელია კვლევა-ინტელექტუალური კლუბი
+              „თაობათა დიალოგი“ — სამოქალაქო ორგანიზაცია, რომელიც მუშაობს
+              ახალგაზრდების განვითარებაზე, საზოგადოებრივ მონაწილეობაზე,
+              მშვიდობის კულტურაზე და შემოქმედებით განათლებაზე.
+            </p>
+
+            <p>
+              „ბიფურკაცია“ აერთიანებს თამაშის, სოციალური მედიისა და
+              თვითგამოხატვის ელემენტებს. მისი მიზანია, მონაწილეებს მისცეს
+              უსაფრთხო სივრცე საკუთარი შესაძლებლობების გამოცდისთვის,
+              გამბედაობის გაძლიერებისთვის და პოზიტიური ჩართულობისთვის.
+            </p>
+
+            <p>
+              თამაში ყველასთვის უფასოა. გამარჯვებული იღებს ფულად პრიზს, რომელიც
+              დაკავშირებულია მხოლოდ თამაშის შედეგებთან — ქულებთან, შესრულებულ
+              გამოწვევებთან და საიტზე მიღებულ რეალურ ჩართულობასთან.
+            </p>
+
+            <p>
+              ნებაყოფლობითი დონაცია არ მოქმედებს ქულებზე, რეიტინგზე ან გამარჯვების
+              შანსზე. მხარდაჭერა ეხმარება RICDOG-ს, რომ პლატფორმა გაგრძელდეს,
+              ფულადი პრიზი შენარჩუნდეს და შეიქმნას ახალი ახალგაზრდული,
+              შემოქმედებითი და საგანმანათლებლო პროგრამები.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-3">
+        <div className="rounded-3xl border border-amber-100 bg-amber-50 p-6 shadow-sm">
+          <div className="mb-4 text-3xl">🏆</div>
+          <h3 className="text-lg font-black text-slate-950">ფულადი პრიზი</h3>
+          <p className="mt-3 text-sm leading-7 text-slate-600">
+            გამარჯვებული ვლინდება თამაშის ქულებით და იღებს ფულად პრიზს. პრიზი
+            არის მოტივაცია, მაგრამ მთავარი მიზანი არის გამბედაობა, განვითარება
+            და პოზიტიური სოციალური ჩართულობა.
+          </p>
+        </div>
+
+        <div className="rounded-3xl border border-violet-100 bg-violet-50 p-6 shadow-sm">
+          <div className="mb-4 text-3xl">💜</div>
+          <h3 className="text-lg font-black text-slate-950">ნებაყოფლობითი დონაცია</h3>
+          <p className="mt-3 text-sm leading-7 text-slate-600">
+            დონაცია არის მხარდაჭერა და არა თამაშში მონაწილეობისთვის საჭირო გადასახადი.
+            ის არ ამატებს ქულებს და არ ქმნის უპირატესობას რეიტინგში.
+          </p>
+        </div>
+
+        <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-6 shadow-sm">
+          <div className="mb-4 text-3xl">🌱</div>
+          <h3 className="text-lg font-black text-slate-950">რატომ გვჭირდება მხარდაჭერა?</h3>
+          <p className="mt-3 text-sm leading-7 text-slate-600">
+            მხარდაჭერა ეხმარება ორგანიზაციას, გააგრძელოს თამაში, გააუმჯობესოს საიტი,
+            შეინარჩუნოს პრიზები და შექმნას მეტი საგანმანათლებლო პროგრამა ახალგაზრდებისთვის.
+          </p>
+        </div>
+      </div>
+
+      <div className="rounded-[2rem] border border-violet-100 bg-white p-6 text-center shadow-sm">
+        <p className="text-xs font-black uppercase tracking-widest text-violet-500">
+          მხარდაჭერა თავისუფალი არჩევანია
+        </p>
+        <h3 className="mt-2 text-2xl font-black text-slate-950">
+          თუ გჯერა ასეთი თამაშების ძალის, შეგიძლია მხარი დაგვიჭირო
+        </h3>
+        <p className="mx-auto mt-3 max-w-2xl text-sm leading-7 text-slate-600">
+          შენი მხარდაჭერა გვეხმარება, რომ „ბიფურკაცია“ დარჩეს უფასო, უსაფრთხო და
+          საინტერესო. დონაციის დეტალური მექანიზმი შეიძლება დაემატოს ცალკე ბმულით
+          ან ორგანიზაციის ოფიციალური არხებით.
+        </p>
+        <a
+          href="https://www.ricdog.org"
+          target="_blank"
+          rel="noreferrer"
+          className="mt-5 inline-flex rounded-2xl bg-gradient-to-r from-violet-700 to-fuchsia-600 px-6 py-3 text-sm font-black text-white shadow-lg shadow-violet-900/20"
+        >
+          💜 მხარი დაუჭირე RICDOG-ს
+        </a>
+      </div>
+
+      <footer className="rounded-3xl bg-[#050311] p-8 text-center text-xs leading-6 text-slate-400">
+        <div className="mb-3 flex justify-center gap-6 font-bold text-slate-300">
+          <button type="button" className="hover:text-white">
+            მთავარი
+          </button>
+          <button type="button" className="hover:text-white">
+            ჩვენს შესახებ
+          </button>
+        </div>
+
+        <p>© ბიფურკაცია. თამაში უფასოა; დონაცია ნებაყოფლობითია და რეიტინგზე არ მოქმედებს.</p>
+        <p>
+          კვლევა-ინტელექტუალური კლუბი „თაობათა დიალოგი“ — RICDOG
+        </p>
+        <p className="mt-3 font-black text-violet-300">🌐 www.ricdog.org</p>
+      </footer>
+    </section>
+  );
+}
+
