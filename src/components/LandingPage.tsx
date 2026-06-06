@@ -852,6 +852,31 @@ export default function LandingPage({
         </div>
       </section>
 
+      <section id="prize-support" className="relative z-10 -mt-8 px-4 sm:px-8 md:px-12">
+        <div className="mx-auto grid max-w-7xl gap-4 rounded-[28px] border border-white/10 bg-white/[0.06] p-5 text-left text-white shadow-2xl backdrop-blur-xl md:grid-cols-[1fr_1fr_1fr]">
+          <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4">
+            <p className="text-xs font-black uppercase tracking-widest text-amber-200">🏆 ფულადი პრიზი</p>
+            <p className="mt-2 text-sm leading-6 text-amber-50">
+              გამარჯვებული ვლინდება მხოლოდ თამაშის ქულებით და იღებს ფულად პრიზს.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-fuchsia-400/20 bg-fuchsia-400/10 p-4">
+            <p className="text-xs font-black uppercase tracking-widest text-fuchsia-200">💜 ნებაყოფლობითი მხარდაჭერა</p>
+            <p className="mt-2 text-sm leading-6 text-fuchsia-50">
+              დონაცია არ ზრდის ქულებს, არ ცვლის რეიტინგს და არ იძლევა უპირატესობას.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4">
+            <p className="text-xs font-black uppercase tracking-widest text-emerald-200">🌱 რატომ ვთხოვთ მხარდაჭერას?</p>
+            <p className="mt-2 text-sm leading-6 text-emerald-50">
+              მხარდაჭერა გვეხმარება თამაშის გაგრძელებაში, პრიზების შენარჩუნებასა და ახალი საგანმანათლებლო პროგრამების შექმნაში.
+            </p>
+          </div>
+        </div>
+      </section>
+
       <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-12 sm:px-8 lg:flex-row lg:px-12">
         <div className="flex-1 space-y-12">
           <div
@@ -874,7 +899,7 @@ export default function LandingPage({
 
               <p className="text-xs font-light text-[#5E5878] md:text-sm">
                 {lang === 'ka'
-                  ? 'აქ ჩანს მხოლოდ ის შესრულებული გამოწვევები, რომელთა გასაჯაროებაზეც მოთამაშემ თანხმობა მისცა.'
+                  ? 'აქ ჩანს TikTok-ზე შესრულებული გამოწვევები. საიტზე მიღებული ნახვები, გულები და კომენტარები ზრდის მოთამაშის ჩართულობის ქულებს.'
                   : 'Only submissions marked public by players appear here.'}
               </p>
 
