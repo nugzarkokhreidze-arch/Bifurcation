@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   Award,
   Calendar,
@@ -7,12 +7,13 @@ import {
   ExternalLink,
   Volume2,
   X,
+  Bot,
+  Send,
 } from 'lucide-react';
 
 import { Marathon, User } from '../types';
 import ChallengeView from './ChallengeView';
 import { marathonService } from '../services/marathonService';
-import { playerService } from '../services/playerService';
 import { submissionService } from '../services/submissionService';
 import { storageKeys, storageService } from '../services/storageService';
 
@@ -36,6 +37,13 @@ type FullscreenMedia = {
   url: string;
   type: string;
   title: string;
+  submission?: any;
+};
+
+type GuideMessage = {
+  id: string;
+  role: 'guide' | 'player';
+  text: string;
 };
 
 function normalizeMarathonId(id: string) {
@@ -107,6 +115,65 @@ function getSubmissionText(submission: any) {
     submission.text_description ||
     ''
   );
+}
+
+function extractTikTokVideoId(url: string) {
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(/\/video\/(\d+)/);
+
+    return match?.[1] || '';
+  } catch {
+    const match = url.match(/\/video\/(\d+)/);
+    return match?.[1] || '';
+  }
+}
+
+function normalizeTikTokUrl(url: string) {
+  return url.split('?')[0];
+}
+
+function createGuideAnswer(question: string, lang: 'ka' | 'en' = 'ka') {
+  const text = question.toLowerCase();
+
+  if (lang === 'en') {
+    if (text.includes('tiktok') || text.includes('link')) {
+      return 'Upload your challenge video to TikTok, copy the public video link, return to the challenge and paste it into the TikTok link field. Then press confirm.';
+    }
+
+    if (text.includes('point') || text.includes('score')) {
+      return 'Your points come from completing challenges, receiving unique support, views and comments on the website. Donations never change points or ranking.';
+    }
+
+    if (text.includes('problem') || text.includes('error') || text.includes('not working')) {
+      return 'Try refreshing the page, check that your TikTok link is public, and make sure you are logged into your cabinet. If it still fails, describe exactly which button does not work.';
+    }
+
+    return 'I am here to help you move step by step. Read the challenge carefully, choose a safe and creative idea, record your TikTok proof, and return here to submit the link.';
+  }
+
+  if (text.includes('tiktok') || text.includes('ტიკტოკ') || text.includes('ბმულ')) {
+    return 'გააკეთე ასე: გადაიღე გამოწვევის ვიდეო, ატვირთე TikTok-ზე საჯაროდ, დააკოპირე ვიდეოს ბმული, დაბრუნდი გამოწვევაში და ჩასვი TikTok ბმულის ველში. შემდეგ დააჭირე დადასტურებას.';
+  }
+
+  if (text.includes('ქულ') || text.includes('რეიტინგ')) {
+    return 'ქულები გემატება გამოწვევის შესრულებისთვის, საიტზე უნიკალური ნახვებისთვის, მხარდაჭერისთვის და კომენტარებისთვის. დონაცია ქულებსა და რეიტინგზე არ მოქმედებს — ის მხოლოდ პროექტის მხარდაჭერაა.';
+  }
+
+  if (
+    text.includes('პრობლ') ||
+    text.includes('შეცდომ') ||
+    text.includes('არ მუშაობ') ||
+    text.includes('ვერ')
+  ) {
+    return 'პირველი ნაბიჯი: განაახლე გვერდი. შემდეგ შეამოწმე, რომ შესული ხარ შენს კაბინეტში და TikTok ბმული საჯაროა. თუ ისევ არ იმუშავებს, მომწერე ზუსტად რომელი ღილაკი არ რეაგირებს და რა ჩანს ეკრანზე.';
+  }
+
+  if (text.includes('იდეა') || text.includes('როგორ')) {
+    return 'აირჩიე მარტივი, უსაფრთხო და კრეატიული გადაწყვეტა. კარგი ვიდეო არ უნდა იყოს საშიში ან დამამცირებელი — მთავარია იდეა, გულწრფელობა და შესრულების სითამამე.';
+  }
+
+  return 'მე აქ ვარ, რომ დაგეხმარო ნაბიჯ-ნაბიჯ. წაიკითხე გამოწვევა მშვიდად, მოიფიქრე უსაფრთხო იდეა, გადაიღე TikTok proof და დაბრუნდი საიტზე ბმულის ჩასასმელად. შენ შეგიძლია!';
 }
 
 function getSubmissionKey(submission: any) {
@@ -187,6 +254,7 @@ export default function PlayerCabinet({
   currentUser,
   submissions,
   monthlyPlayerRecords,
+  onLeaveGame,
   onStateUpdate,
   lang = 'ka',
   activeCabinetTab,
@@ -211,6 +279,18 @@ export default function PlayerCabinet({
   const [marathons, setMarathons] = useState<Marathon[]>([]);
   const [fullscreenMedia, setFullscreenMedia] =
     useState<FullscreenMedia | null>(null);
+
+  const [guideInput, setGuideInput] = useState('');
+  const [guideMessages, setGuideMessages] = useState<GuideMessage[]>([
+    {
+      id: 'guide-welcome',
+      role: 'guide',
+      text:
+        lang === 'ka'
+          ? 'გამარჯობა! მე ვარ შენი AI მეგზური. შემიძლია დაგეხმარო საიტის გამოყენებაში, გამოწვევის იდეებში, მოტივაციაში და ტექნიკური პრობლემების ნაბიჯ-ნაბიჯ მოგვარებაში.'
+          : 'Hi! I am your AI guide. I can help with navigation, challenge ideas, motivation and step-by-step troubleshooting.',
+    },
+  ]);
 
   useEffect(() => {
     let mounted = true;
@@ -361,8 +441,8 @@ export default function PlayerCabinet({
   const livePoints = useMemo(() => {
     if (!currentUser) return 0;
 
-    return userMarathonRecord ? userMarathonRecord.points : currentUser.points || 100;
-  }, [userMarathonRecord, currentUser]);
+    return currentUser.points || 100;
+  }, [currentUser]);
 
   const completedCount = completedChallengeCards.length;
 
@@ -374,73 +454,27 @@ export default function PlayerCabinet({
       submission.isPublic === true
   ).length;
 
-  async function handleBookConsultation(type: 'question' | 'video') {
-    if (!currentUser) return;
+  function handleGuideSubmit(event: FormEvent) {
+    event.preventDefault();
 
-    const cost = type === 'question' ? 10 : 40;
+    const cleanInput = guideInput.trim();
 
-    if (livePoints < cost) {
-      alert(
-        lang === 'ka'
-          ? 'არასაკმარისი ქულების ბალანსი!'
-          : 'Insufficient points balance!'
-      );
+    if (!cleanInput) return;
 
-      return;
-    }
+    const playerMessage: GuideMessage = {
+      id: `player-${Date.now()}`,
+      role: 'player',
+      text: cleanInput,
+    };
 
-    const nextPoints = Math.max(0, livePoints - cost);
+    const guideMessage: GuideMessage = {
+      id: `guide-${Date.now()}`,
+      role: 'guide',
+      text: createGuideAnswer(cleanInput, lang),
+    };
 
-    const records = storageService.loadData<any[]>(
-      storageKeys.monthlyPlayerRecords,
-      []
-    );
-
-    const updatedRecords = records.map(record => {
-      if (
-        record.playerId === currentUser.id &&
-        record.marathonId === activeNormalizedMarathonId
-      ) {
-        return {
-          ...record,
-          points: nextPoints,
-          updatedAt: new Date().toISOString(),
-        };
-      }
-
-      return record;
-    });
-
-    storageService.saveData(storageKeys.monthlyPlayerRecords, updatedRecords);
-
-    try {
-      await playerService.updatePlayer(currentUser.id, {
-        points: nextPoints,
-      });
-    } catch (error) {
-      console.warn('Consultation points update saved locally only:', error);
-
-      const users = storageService.loadData<User[]>(storageKeys.users, []);
-      storageService.saveData(
-        storageKeys.users,
-        users.map(user =>
-          user.id === currentUser.id ? { ...user, points: nextPoints } : user
-        )
-      );
-
-      storageService.saveData(storageKeys.currentUser, {
-        ...currentUser,
-        points: nextPoints,
-      });
-    }
-
-    alert(
-      lang === 'ka'
-        ? `მოთხოვნა გაფორმდა. ჩამოგეჭრათ -${cost} ქულა.`
-        : `Booked! -${cost} points.`
-    );
-
-    onStateUpdate?.();
+    setGuideMessages(prev => [...prev, playerMessage, guideMessage]);
+    setGuideInput('');
   }
 
   const guestUser = {
@@ -525,6 +559,14 @@ export default function PlayerCabinet({
               <span className="text-xl">🪙</span>
             </p>
           </div>
+
+          <button
+            type="button"
+            onClick={onLeaveGame}
+            className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-[11px] font-black text-rose-700"
+          >
+            {lang === 'ka' ? 'კაბინეტის გაუქმება' : 'Cancel cabinet'}
+          </button>
         ) : (
           <div className="flex flex-col gap-2 sm:flex-row">
             <button
@@ -757,8 +799,8 @@ export default function PlayerCabinet({
           },
           {
             id: 'consultation',
-            label_ka: '💬 ანონიმური ვიდეო კონსულტაცია',
-            label_en: 'COACHING',
+            label_ka: '🤖 AI მეგზური',
+            label_en: 'AI GUIDE',
           },
         ].map(tab => {
           if (tab.id === 'consultation' && !currentUser) return null;
@@ -828,6 +870,7 @@ export default function PlayerCabinet({
                           submission.challengeTitle ||
                           submission.challenge_title ||
                           (lang === 'ka' ? 'გამოწვევა' : 'Challenge'),
+                        submission,
                       })
                     }
                     className="cursor-pointer space-y-2 rounded-xl border border-violet-100/60 bg-white p-4 text-left shadow-sm transition-all hover:shadow-md"
@@ -926,52 +969,92 @@ export default function PlayerCabinet({
           ))}
 
         {cabinetTab === 'consultation' && currentUser && (
-          <div className="mx-auto max-w-xl space-y-4 rounded-2xl border border-violet-100/80 bg-white p-6 text-left shadow-sm">
-            <h3 className="flex items-center gap-2 text-sm font-black uppercase text-[#27213F]">
-              💬{' '}
-              {lang === 'ka'
-                ? 'ანონიმური ვიდეო კონსულტაცია'
-                : 'Coaching suite room'}
-            </h3>
-
-            <p className="text-xs leading-relaxed text-slate-500">
-              {lang === 'ka'
-                ? 'გამოიყენეთ ხელმისაწვდომი ლიმიტები თქვენი პროგრესის ინდივიდუალური განხილვისა და კითხვებისთვის.'
-                : 'Use available limits for expert feedback.'}
-            </p>
-
-            <div className="grid grid-cols-1 gap-4 pt-2 text-xs sm:grid-cols-2">
-              <div className="space-y-2 rounded-xl border bg-slate-50 p-4">
-                <p className="font-bold">
-                  {lang === 'ka'
-                    ? '✍️ წერილობითი კითხვა (-10 ქულა)'
-                    : '✍️ Written question (-10 pts)'}
-                </p>
-
-                <button
-                  type="button"
-                  onClick={() => handleBookConsultation('question')}
-                  className="mt-2 w-full cursor-pointer rounded-lg bg-[#7C4DFF] py-2 text-xs font-bold text-white"
-                >
-                  {lang === 'ka' ? 'კითხვის დასმა' : 'Ask question'}
-                </button>
+          <div className="mx-auto max-w-3xl space-y-4 rounded-2xl border border-violet-100/80 bg-white p-6 text-left shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#7C4DFF]/10 text-[#7C4DFF]">
+                <Bot className="h-6 w-6" />
               </div>
 
-              <div className="space-y-2 rounded-xl border bg-slate-50 p-4">
-                <p className="font-bold">
-                  {lang === 'ka'
-                    ? '🎥 15-წუთიანი ვიდეო ზარი (-40 ქულა)'
-                    : '🎥 15-minute video call (-40 pts)'}
-                </p>
+              <div>
+                <h3 className="text-sm font-black uppercase text-[#27213F]">
+                  {lang === 'ka' ? 'AI მეგზური' : 'AI Guide'}
+                </h3>
 
-                <button
-                  type="button"
-                  onClick={() => handleBookConsultation('video')}
-                  className="mt-2 w-full cursor-pointer rounded-lg bg-[#7C4DFF] py-2 text-xs font-bold text-white"
-                >
-                  {lang === 'ka' ? 'ზარის მოთხოვნა' : 'Request call'}
-                </button>
+                <p className="text-xs leading-relaxed text-slate-500">
+                  {lang === 'ka'
+                    ? 'მეგობრული დამხმარე საიტის ნავიგაციისთვის, გამოწვევის იდეებისთვის, მოტივაციისთვის და ტექნიკური პრობლემების მარტივად ახსნისთვის.'
+                    : 'A friendly helper for navigation, challenge ideas, motivation and simple troubleshooting.'}
+                </p>
               </div>
+            </div>
+
+            <div className="rounded-2xl border border-amber-100 bg-amber-50 p-3 text-[11px] font-semibold leading-5 text-amber-800">
+              {lang === 'ka'
+                ? 'შენიშვნა: AI მეგზური არის თამაშის დამხმარე და მოტივატორი. ის არ ცვლის ექიმს, ფსიქოლოგს ან იურისტს.'
+                : 'Note: the AI guide is a game helper and motivator. It does not replace a doctor, therapist or lawyer.'}
+            </div>
+
+            <div className="max-h-80 space-y-3 overflow-y-auto rounded-2xl bg-slate-50 p-4">
+              {guideMessages.map(message => (
+                <div
+                  key={message.id}
+                  className={`max-w-[86%] rounded-2xl p-3 text-xs leading-6 ${
+                    message.role === 'guide'
+                      ? 'bg-white text-slate-700 shadow-sm'
+                      : 'ml-auto bg-[#7C4DFF] text-white'
+                  }`}
+                >
+                  <p className="mb-1 text-[10px] font-black uppercase tracking-wider opacity-70">
+                    {message.role === 'guide'
+                      ? lang === 'ka'
+                        ? 'AI მეგზური'
+                        : 'AI Guide'
+                      : lang === 'ka'
+                        ? 'თქვენ'
+                        : 'You'}
+                  </p>
+
+                  {message.text}
+                </div>
+              ))}
+            </div>
+
+            <form onSubmit={handleGuideSubmit} className="flex gap-2">
+              <input
+                value={guideInput}
+                onChange={event => setGuideInput(event.target.value)}
+                placeholder={
+                  lang === 'ka'
+                    ? 'მაგალითად: როგორ ჩავასვა TikTok ბმული?'
+                    : 'Example: how do I submit a TikTok link?'
+                }
+                className="min-w-0 flex-1 rounded-xl border border-violet-100 bg-[#FAF8FF] p-3 text-xs outline-none focus:border-[#7C4DFF]"
+              />
+
+              <button
+                type="submit"
+                className="inline-flex items-center gap-2 rounded-xl bg-[#7C4DFF] px-4 py-3 text-xs font-black text-white"
+              >
+                <Send className="h-4 w-4" />
+                {lang === 'ka' ? 'გაგზავნა' : 'Send'}
+              </button>
+            </form>
+
+            <div className="grid gap-2 text-[11px] font-bold text-slate-600 sm:grid-cols-3">
+              {[
+                lang === 'ka' ? 'როგორ დავადასტურო გამოწვევა?' : 'How do I confirm a challenge?',
+                lang === 'ka' ? 'მომეცი უსაფრთხო იდეა' : 'Give me a safe idea',
+                lang === 'ka' ? 'როგორ მუშაობს ქულები?' : 'How do points work?',
+              ].map(prompt => (
+                <button
+                  key={prompt}
+                  type="button"
+                  onClick={() => setGuideInput(prompt)}
+                  className="rounded-xl border border-violet-100 bg-white p-3 text-left hover:bg-violet-50"
+                >
+                  {prompt}
+                </button>
+              ))}
             </div>
           </div>
         )}
@@ -986,27 +1069,79 @@ export default function PlayerCabinet({
 
             <div className="flex max-h-[60vh] min-h-[240px] w-full items-center justify-center overflow-hidden rounded-2xl border bg-black">
               {fullscreenMedia.type === 'tiktok' && fullscreenMedia.url && (
-                <div className="flex h-full min-h-[240px] w-full flex-col items-center justify-center bg-gradient-to-br from-slate-950 via-[#111827] to-[#2d0b45] p-8 text-center">
-                  <ExternalLink className="mb-4 h-12 w-12 text-fuchsia-200" />
-                  <p className="text-sm font-black uppercase tracking-[0.2em] text-fuchsia-100">
-                    TikTok Proof
-                  </p>
-                  <p className="mt-3 max-w-md text-xs leading-6 text-slate-300">
-                    {lang === 'ka'
-                      ? 'ვიდეო TikTok-ზეა გამოქვეყნებული. გახსენი ბმული ახალ ფანჯარაში.'
-                      : 'The video is published on TikTok. Open the link in a new tab.'}
-                  </p>
-                  <a
-                    href={fullscreenMedia.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-6 inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-xs font-black text-slate-950"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                    {lang === 'ka' ? 'TikTok-ზე ნახვა' : 'Open on TikTok'}
-                  </a>
+                (() => {
+                  const cleanUrl = normalizeTikTokUrl(fullscreenMedia.url);
+                  const videoId = extractTikTokVideoId(cleanUrl);
+
+                  if (videoId) {
+                    return (
+                      <iframe
+                        src={`https://www.tiktok.com/embed/v2/${videoId}`}
+                        title="TikTok video"
+                        allow="fullscreen"
+                        className="h-[540px] w-full max-w-md border-0 bg-black"
+                      />
+                    );
+                  }
+
+                  return (
+                    <div className="flex h-full min-h-[240px] w-full flex-col items-center justify-center bg-gradient-to-br from-slate-950 via-[#111827] to-[#2d0b45] p-8 text-center">
+                      <ExternalLink className="mb-4 h-12 w-12 text-fuchsia-200" />
+                      <p className="text-sm font-black uppercase tracking-[0.2em] text-fuchsia-100">
+                        TikTok Proof
+                      </p>
+                      <p className="mt-3 max-w-md text-xs leading-6 text-slate-300">
+                        {lang === 'ka'
+                          ? 'ვიდეო TikTok-ზეა გამოქვეყნებული. გახსენი ბმული ახალ ფანჯარაში.'
+                          : 'The video is published on TikTok. Open the link in a new tab.'}
+                      </p>
+                      <a
+                        href={fullscreenMedia.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-6 inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-xs font-black text-slate-950"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        {lang === 'ka' ? 'TikTok-ზე ნახვა' : 'Open on TikTok'}
+                      </a>
+                    </div>
+                  );
+                })()
+              )}
+
+              {fullscreenMedia.submission && (
+                <div className="w-full rounded-2xl border border-white/10 bg-zinc-900 p-4 text-left text-xs leading-6 text-slate-200">
+                  <div className="grid grid-cols-3 gap-2 text-center font-black">
+                    <div className="rounded-xl bg-white/10 p-2">
+                      👁 {fullscreenMedia.submission.viewedBy?.length || fullscreenMedia.submission.siteViews || 0}
+                    </div>
+                    <div className="rounded-xl bg-white/10 p-2">
+                      ❤️ {fullscreenMedia.submission.likedBy?.length || fullscreenMedia.submission.likes || 0}
+                    </div>
+                    <div className="rounded-xl bg-white/10 p-2">
+                      💬 {fullscreenMedia.submission.comments?.length || fullscreenMedia.submission.siteComments || 0}
+                    </div>
+                  </div>
+
+                  {fullscreenMedia.submission.comments?.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-violet-300">
+                        {lang === 'ka' ? 'კომენტარები' : 'Comments'}
+                      </p>
+
+                      {fullscreenMedia.submission.comments.slice(0, 5).map((comment: any) => (
+                        <div key={comment.id || comment.createdAt} className="rounded-xl bg-white/10 p-2">
+                          <p className="font-bold text-violet-200">
+                            @{comment.authorNickname || comment.nickname || 'სტუმარი'}
+                          </p>
+                          <p>{comment.text || comment.comment || ''}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
+
 
               {fullscreenMedia.type === 'video' && fullscreenMedia.url && (
                 <video
