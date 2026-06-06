@@ -995,7 +995,7 @@ function AboutPage() {
           </h3>
 
           <p className="mt-2 text-xs font-bold uppercase tracking-widest text-slate-400">
-            კვლევა-ინტელექტუალური კლუბი „თაობათა დიალოგი“ — RICDOG
+            სამეცნიერო-ინტელექტუალური კლუბი „თაობათა დიალოგი“ — RICDOG
           </p>
 
           <div className="mt-6 space-y-4 text-sm leading-7 text-slate-600">
