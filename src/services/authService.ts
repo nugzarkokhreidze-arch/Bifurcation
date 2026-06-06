@@ -302,6 +302,65 @@ async function upsertCloudProfile(user: User) {
   return data ? mapPlayerRowToUser(data) : (user as StoredUser);
 }
 
+
+async function resolveLoginEmail(identifier: string) {
+  const normalizedIdentifier = normalizeIdentifier(identifier);
+
+  if (normalizedIdentifier.includes('@')) {
+    return normalizedIdentifier;
+  }
+
+  try {
+    const { data: nicknameMatch, error: nicknameError } = await supabase
+      .from('players')
+      .select('email, nickname, phone, status')
+      .ilike('nickname', normalizedIdentifier)
+      .limit(1)
+      .maybeSingle();
+
+    if (nicknameError) throw nicknameError;
+
+    if (nicknameMatch?.email) {
+      return normalizeEmail(nicknameMatch.email);
+    }
+
+    const { data: phoneMatch, error: phoneError } = await supabase
+      .from('players')
+      .select('email, nickname, phone, status')
+      .eq('phone', normalizeValue(identifier))
+      .limit(1)
+      .maybeSingle();
+
+    if (phoneError) throw phoneError;
+
+    if (phoneMatch?.email) {
+      return normalizeEmail(phoneMatch.email);
+    }
+  } catch (error: any) {
+    throw new Error(
+      `ნიკნეიმით ანგარიშის მოძებნა ვერ მოხერხდა. სცადეთ ელფოსტით შესვლა. დეტალი: ${error?.message || error}`
+    );
+  }
+
+  throw new Error('ამ ნიკნეიმით ან ტელეფონით ანგარიში ვერ მოიძებნა. სცადეთ ელფოსტით შესვლა.');
+}
+
+function cloudAuthErrorMessage(error: any, action: 'register' | 'login') {
+  const message = String(error?.message || error || '');
+
+  if (message === 'EMAIL_CONFIRMATION_REQUIRED' || message.toLowerCase().includes('email not confirmed')) {
+    return 'Supabase-ში ჩართულია ელფოსტის დადასტურება. გამორთეთ Confirm Email, ან დაადასტურეთ ელფოსტა და შემდეგ სცადეთ შესვლა.';
+  }
+
+  if (message.toLowerCase().includes('row-level security') || message.toLowerCase().includes('permission denied')) {
+    return 'Supabase-ის წვდომის წესები (RLS policy) არ აძლევს აპლიკაციას შენახვის უფლებას. გაუშვით მოწოდებული Access Policy SQL და სცადეთ თავიდან.';
+  }
+
+  return action === 'register'
+    ? `რეგისტრაცია საერთო ბაზაში ვერ შეინახა: ${message}`
+    : `შესვლა ვერ მოხერხდა: ${message}`;
+}
+
 export const authService = {
   async registerPlayer(userData: RegisterPlayerInput): Promise<User> {
     const email = normalizeEmail(userData.email);
@@ -337,6 +396,10 @@ export const authService = {
         throw new Error('Supabase მომხმარებელი ვერ შეიქმნა.');
       }
 
+      if (!signUpData.session) {
+        throw new Error('EMAIL_CONFIRMATION_REQUIRED');
+      }
+
       const cloudUser = createCloudUser(authUser.id, {
         ...userData,
         email,
@@ -346,31 +409,10 @@ export const authService = {
 
       return persistSession(savedProfile);
     } catch (error: any) {
-      console.warn('Supabase registration failed. Using local fallback:', error?.message || error);
-
-      const localUsers = loadUsers();
-      const nickname = normalizeValue(userData.nickname).toLowerCase();
-      const phone = normalizeValue(userData.phone);
-
-      const duplicate = localUsers.find(user => {
-        const sameEmail = normalizeEmail(user.email) === email;
-        const sameNickname =
-          nickname && normalizeValue(user.nickname).toLowerCase() === nickname;
-        const samePhone = phone && normalizeValue(user.phone) === phone;
-        return sameEmail || Boolean(sameNickname) || Boolean(samePhone);
-      });
-
-      if (duplicate) {
-        throw new Error('მოცემული ელფოსტა, ტელეფონი ან ნიკნეიმი უკვე გამოყენებულია.');
-      }
-
-      const localUser = createLocalUser({
-        ...userData,
-        email,
-      });
-
-      return persistSession(localUser);
+      console.warn('Supabase registration failed:', error?.message || error);
+      throw new Error(cloudAuthErrorMessage(error, 'register'));
     }
+
   },
 
   async loginPlayer(identifier: string, passwordHash: string): Promise<User> {
@@ -385,13 +427,11 @@ export const authService = {
     }
 
     try {
-      if (!normalizedIdentifier.includes('@')) {
-        throw new Error('Cloud login requires email. Trying local nickname fallback.');
-      }
+      const loginEmail = await resolveLoginEmail(identifier);
 
       const { data: signInData, error: signInError } =
         await supabase.auth.signInWithPassword({
-          email: normalizedIdentifier,
+          email: loginEmail,
           password: passwordHash,
         });
 
@@ -410,9 +450,9 @@ export const authService = {
           createCloudUser(authUser.id, {
             firstName: authUser.user_metadata?.first_name || '',
             lastName: authUser.user_metadata?.last_name || '',
-            email: authUser.email || normalizedIdentifier,
+            email: authUser.email || loginEmail,
             phone: authUser.user_metadata?.phone || '',
-            nickname: authUser.user_metadata?.nickname || normalizedIdentifier.split('@')[0],
+            nickname: authUser.user_metadata?.nickname || loginEmail.split('@')[0],
             passwordHash,
             avatar: '',
             fictionalNameEnabled: true,
@@ -432,33 +472,10 @@ export const authService = {
 
       return persistSession(updatedProfile);
     } catch (error: any) {
-      console.warn('Supabase login failed. Trying local fallback:', error?.message || error);
-
-      const localUsers = loadUsers();
-
-      const matched = localUsers.find(user => {
-        const emailMatches = normalizeEmail(user.email) === normalizedIdentifier;
-        const nicknameMatches =
-          normalizeValue(user.nickname).toLowerCase() === normalizedIdentifier;
-        const phoneMatches = normalizeValue(user.phone) === normalizeValue(identifier);
-
-        return (emailMatches || nicknameMatches || phoneMatches) && user.passwordHash === passwordHash;
-      });
-
-      if (!matched) {
-        throw new Error('არასწორი მონაცემები ან კავშირის შეცდომა.');
-      }
-
-      ensureActiveUser(matched);
-
-      const updatedUser: StoredUser = {
-        ...matched,
-        lastActiveDate: new Date().toISOString().split('T')[0],
-        updatedAt: new Date().toISOString(),
-      };
-
-      return persistSession(updatedUser);
+      console.warn('Supabase login failed:', error?.message || error);
+      throw new Error(cloudAuthErrorMessage(error, 'login'));
     }
+
   },
 
   async logoutPlayer(): Promise<void> {
