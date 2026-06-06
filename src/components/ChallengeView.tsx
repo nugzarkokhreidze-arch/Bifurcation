@@ -13,6 +13,7 @@ import {
 import { Challenge, User } from '../types';
 import { marathonService } from '../services/marathonService';
 import { playerService } from '../services/playerService';
+import { submissionService } from '../services/submissionService';
 import {
   calculateCompletionPoints,
   calculateExpiredPenalty,
@@ -52,8 +53,6 @@ const challengeImages = [
 ];
 
 const EXTRA_SUBMISSIONS_KEY = 'bifurcation_submissions';
-const PLAIN_SUBMISSIONS_KEY = 'submissions';
-const LAST_SUBMISSION_DEBUG_KEY = 'bifurcation_last_submission_debug';
 
 function normalizeMarathonId(id: string) {
   return id.startsWith('marathon-') ? id : `marathon-${id}`;
@@ -62,64 +61,11 @@ function normalizeMarathonId(id: string) {
 function getSubmissionStorageKeys() {
   return Array.from(
     new Set(
-      [
-        storageKeys.submissions,
-        EXTRA_SUBMISSIONS_KEY,
-        PLAIN_SUBMISSIONS_KEY,
-      ].filter((key): key is string => Boolean(key))
+      [storageKeys.submissions, EXTRA_SUBMISSIONS_KEY].filter(
+        (key): key is string => Boolean(key)
+      )
     )
   );
-}
-
-function loadArrayFromStorageKey<T = any>(key: string): T[] {
-  try {
-    const fromService = storageService.loadData<T[]>(key, []);
-
-    if (Array.isArray(fromService)) {
-      return fromService;
-    }
-  } catch (error) {
-    console.warn(`storageService.loadData failed for ${key}:`, error);
-  }
-
-  if (typeof window === 'undefined') return [];
-
-  try {
-    const raw = window.localStorage.getItem(key);
-    const parsed = raw ? JSON.parse(raw) : [];
-
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.warn(`localStorage read failed for ${key}:`, error);
-    return [];
-  }
-}
-
-function saveArrayToStorageKey<T = any>(key: string, items: T[]) {
-  try {
-    storageService.saveData(key, items);
-  } catch (error) {
-    console.warn(`storageService.saveData failed for ${key}:`, error);
-  }
-
-  if (typeof window === 'undefined') return;
-
-  try {
-    window.localStorage.setItem(key, JSON.stringify(items));
-  } catch (error) {
-    console.warn(`localStorage write failed for ${key}:`, error);
-  }
-}
-
-function notifyLocalStorageChanged() {
-  if (typeof window === 'undefined') return;
-
-  try {
-    window.dispatchEvent(new Event('storage'));
-    window.dispatchEvent(new CustomEvent('bifurcation-storage-updated'));
-  } catch (error) {
-    console.warn('Could not dispatch storage update event:', error);
-  }
 }
 
 function makeLocalSubmissionId() {
@@ -200,7 +146,7 @@ function mergeSubmissions(...lists: any[][]) {
 
 function loadAllSubmissions() {
   const lists = getSubmissionStorageKeys().map(key =>
-    loadArrayFromStorageKey<any>(key)
+    storageService.loadData<any[]>(key, [])
   );
 
   return mergeSubmissions(...lists);
@@ -208,60 +154,49 @@ function loadAllSubmissions() {
 
 function saveAllSubmissions(items: any[]) {
   for (const key of getSubmissionStorageKeys()) {
-    saveArrayToStorageKey(key, items);
+    try {
+      storageService.saveData(key, items);
+    } catch (error) {
+      console.warn(`Could not save submissions to ${key}:`, error);
+    }
   }
-
-  notifyLocalStorageChanged();
 }
 
 function safeSaveSubmission(submission: any) {
   const cached = loadAllSubmissions();
-
   const next = mergeSubmissions(
     [submission],
     cached.filter(
       item =>
         item.id !== submission.id &&
         item.remoteId !== submission.id &&
-        item.id !== submission.remoteId &&
-        !(
-          item.playerId === submission.playerId &&
-          item.challengeId === submission.challengeId &&
-          item.marathonId === submission.marathonId
-        )
+        item.id !== submission.remoteId
     )
   );
 
   saveAllSubmissions(next);
-
-  if (typeof window !== 'undefined') {
-    try {
-      window.localStorage.setItem(
-        LAST_SUBMISSION_DEBUG_KEY,
-        JSON.stringify(submission)
-      );
-    } catch (error) {
-      console.warn('Could not save last submission debug copy:', error);
-    }
-  }
 }
 
-function findExistingSubmissionForChallenge(
+
+function findExistingSubmissionForChallengeFromList(
+  items: any[],
   playerId: string,
   challengeId: string,
   marathonId?: string
 ) {
-  return loadAllSubmissions().find(item => {
-    const samePlayer = item.playerId === playerId || item.userId === playerId;
-    const sameChallenge = item.challengeId === challengeId;
+  return items.find(item => {
+    const samePlayer = item.playerId === playerId || item.userId === playerId || item.player_id === playerId;
+    const sameChallenge = item.challengeId === challengeId || item.challenge_id === challengeId;
 
     if (!samePlayer || !sameChallenge) return false;
 
     if (!marathonId) return true;
 
+    const itemMarathonId = String(item.marathonId || item.marathon_id || '');
+
     return (
-      item.marathonId === marathonId ||
-      normalizeMarathonId(String(item.marathonId || '')) === marathonId
+      itemMarathonId === marathonId ||
+      normalizeMarathonId(itemMarathonId) === marathonId
     );
   });
 }
@@ -328,6 +263,7 @@ export default function ChallengeView({
   onStateUpdate,
   lang = 'ka',
   selectedMarathonId,
+  submissions = [],
   onStartRegister,
   onStartLogin,
 }: ChallengeViewProps) {
@@ -397,6 +333,10 @@ export default function ChallengeView({
       ) || null
     );
   }, [currentUser, selectedMarathonId, countdownTick, forceUpdate]);
+
+  const allKnownSubmissions = useMemo(() => {
+    return mergeSubmissions(loadAllSubmissions(), submissions || []);
+  }, [submissions, forceUpdate, countdownTick]);
 
   const selectedTiming = useMemo(() => {
     if (!selectedChallenge || !playerRecord?.acceptedDates) return null;
@@ -738,16 +678,18 @@ export default function ChallengeView({
     const marathonId = normalizeMarathonId(selectedMarathonId);
     const { records, record } = ensureLocalRecord(currentUser.id, marathonId);
 
-    const existingSubmission = findExistingSubmissionForChallenge(
+    const existingSubmission = findExistingSubmissionForChallengeFromList(
+      allKnownSubmissions,
       currentUser.id,
       selectedChallenge.id,
       marathonId
     );
 
-    const completedWithoutSavedSubmission =
-      record.completedChallenges.includes(selectedChallenge.id) && !existingSubmission;
+    const completedWithoutSavedSubmission = Boolean(
+      record.completedChallenges.includes(selectedChallenge.id) && !existingSubmission
+    );
 
-    if (record.completedChallenges.includes(selectedChallenge.id) && existingSubmission) {
+    if (record.completedChallenges.includes(selectedChallenge.id) && !completedWithoutSavedSubmission) {
       setErrorMessage(
         lang === 'ka'
           ? 'ეს გამოწვევა უკვე შესრულებულია.'
@@ -825,59 +767,52 @@ export default function ChallengeView({
 
       const gainedPoints = completedWithoutSavedSubmission ? 0 : points.totalPoints;
 
-      const now = new Date().toISOString();
-      const submissionId = makeLocalSubmissionId();
+      const savedSubmission = await submissionService.createSubmission({
+        playerId: currentUser.id,
+        challengeId: selectedChallenge.id,
+        marathonId,
+        submissionType: 'tiktok',
+        visibility: 'public',
+        comment,
+        reflectionText: comment,
+        socialUrl: cleanUrl,
+        tiktokUrl: cleanUrl,
+        externalUrl: cleanUrl,
+        challengeTitle: getChallengeTitle(selectedChallenge),
+        playerNickname: currentUser.nickname || currentUser.firstName || 'მოთამაშე',
+        playerAvatar:
+          currentUser.avatar ||
+          getFallbackAvatar(currentUser.nickname || currentUser.email || currentUser.id),
+      });
 
       const submission = {
-        id: submissionId,
+        ...savedSubmission,
         playerId: currentUser.id,
         userId: currentUser.id,
         challengeId: selectedChallenge.id,
         marathonId,
-
         submissionType: 'tiktok',
         socialPlatform: 'tiktok',
         socialUrl: cleanUrl,
         tiktokUrl: cleanUrl,
         externalUrl: cleanUrl,
-
+        videoUrl: cleanUrl,
         visibility: 'public',
         publishToWall: true,
         publish_to_wall: true,
         approved: true,
         status: 'completed',
         isPublic: true,
-
         playerNickname: currentUser.nickname || currentUser.firstName || 'მოთამაშე',
         playerAvatar:
           currentUser.avatar ||
           getFallbackAvatar(currentUser.nickname || currentUser.email || currentUser.id),
-
         challengeTitle: getChallengeTitle(selectedChallenge),
-
         comment,
         reflectionText: comment,
         textDescription: comment,
-
-        fileUrl: '',
-        videoUrl: '',
-        localPreviewUrl: '',
-
-        viewedBy: [],
-        likedBy: [],
-        votedUserIds: [],
-        comments: [],
-        commentPointsGivenBy: [],
-        votes: 0,
-        likes: 0,
-        siteViews: 0,
-        siteLikes: 0,
-        siteComments: 0,
-        engagementPoints: 0,
-
         basePoints: points.totalPoints,
-        createdAt: now,
-        updatedAt: now,
+        updatedAt: new Date().toISOString(),
       };
 
       safeSaveSubmission(submission);
@@ -977,10 +912,10 @@ export default function ChallengeView({
     }
 
     const completedInRecord = playerRecord.completedChallenges?.includes(challenge.id);
-
     const hasSavedSubmission = currentUser
       ? Boolean(
-          findExistingSubmissionForChallenge(
+          findExistingSubmissionForChallengeFromList(
+            allKnownSubmissions,
             currentUser.id,
             challenge.id,
             normalizeMarathonId(selectedMarathonId)
