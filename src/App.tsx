@@ -1,6 +1,5 @@
 import {
   useEffect,
-  useMemo,
   useState,
   type FormEvent,
   type ReactNode,
@@ -9,19 +8,14 @@ import {
   Home,
   LogOut,
   PlayCircle,
-  Trophy,
   UserPlus,
-  Users,
-  Video,
   Wallet,
 } from 'lucide-react';
 
 import type { Marathon, Submission, User } from './types';
 
 import LandingPage from './components/LandingPage';
-import Leaderboard from './components/Leaderboard';
 import PlayerCabinet from './components/PlayerCabinet';
-import VideoFeed from './components/VideoFeed';
 
 import { authService } from './services/authService';
 import { backupService } from './services/backupService';
@@ -30,13 +24,7 @@ import { playerService } from './services/playerService';
 import { submissionService } from './services/submissionService';
 import { storageKeys, storageService } from './services/storageService';
 
-type Tab =
-  | 'home'
-  | 'marathons'
-  | 'challenges'
-  | 'submissions'
-  | 'leaderboard'
-  | 'profile';
+type Tab = 'home' | 'challenges' | 'profile';
 
 type AuthMode = 'login' | 'register';
 
@@ -49,6 +37,8 @@ type AuthForm = {
   phone: string;
   nickname: string;
 };
+
+const EXTRA_SUBMISSIONS_KEY = 'submissions';
 
 function createGuestUser(): User {
   return {
@@ -79,28 +69,14 @@ function createGuestUser(): User {
   };
 }
 
-function normalizeMarathonId(id: string) {
-  return id.startsWith('marathon-') ? id : `marathon-${id}`;
-}
-
-function shortMarathonId(id: string) {
-  return id.replace('marathon-', '');
-}
-
-function getOrCreateGuestVoterId() {
-  if (typeof window === 'undefined') return '';
-
-  const existing = localStorage.getItem('bifurcation_guest_voter_id');
-
-  if (existing) return existing;
-
-  const created = `guest-voter-${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2, 10)}`;
-
-  localStorage.setItem('bifurcation_guest_voter_id', created);
-
-  return created;
+function getSubmissionStorageKeys() {
+  return Array.from(
+    new Set(
+      [storageKeys.submissions, EXTRA_SUBMISSIONS_KEY].filter(
+        (key): key is string => Boolean(key)
+      )
+    )
+  );
 }
 
 function mergeById<T extends { id?: string }>(...lists: T[][]) {
@@ -114,15 +90,15 @@ function mergeById<T extends { id?: string }>(...lists: T[][]) {
   return Array.from(map.values());
 }
 
-const EXTRA_SUBMISSIONS_KEY = 'bifurcation_submissions';
+function isActivePlayer(user: User) {
+  const status = user.status || 'active';
 
-function getSubmissionStorageKeys() {
-  return Array.from(
-    new Set(
-      [storageKeys.submissions, EXTRA_SUBMISSIONS_KEY].filter(
-        (key): key is string => Boolean(key)
-      )
-    )
+  return (
+    !user.isAdmin &&
+    !user.banned &&
+    status !== 'cancelled' &&
+    status !== 'deleted' &&
+    status !== 'inactive'
   );
 }
 
@@ -144,12 +120,19 @@ function saveLocalSubmissions(items: Submission[]) {
   }
 }
 
+function loadLocalUsers(currentUser?: User | null) {
+  const users = storageService.loadData<User[]>(storageKeys.users, []);
+  const merged = mergeById(users, currentUser ? [currentUser] : []);
+
+  return merged.filter(isActivePlayer);
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
-  const [users, setUsers] = useState<User[]>([]);
+  const [, setUsers] = useState<User[]>([]);
   const [marathons, setMarathons] = useState<Marathon[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [monthlyPlayerRecords, setMonthlyPlayerRecords] = useState<any[]>([]);
@@ -187,7 +170,7 @@ export default function App() {
 
     const localSubmissions = loadLocalSubmissions();
 
-    const localUsers = storageService.loadData<User[]>(storageKeys.users, []);
+    const localUsers = loadLocalUsers(localCurrentUser);
 
     const localRecords = storageService.loadData<any[]>(
       storageKeys.monthlyPlayerRecords,
@@ -216,8 +199,7 @@ export default function App() {
       );
 
       const localSubmissions = loadLocalSubmissions();
-
-      const localUsers = storageService.loadData<User[]>(storageKeys.users, []);
+      const localUsers = loadLocalUsers(localCurrentUser);
 
       const localRecords = storageService.loadData<any[]>(
         storageKeys.monthlyPlayerRecords,
@@ -243,6 +225,7 @@ export default function App() {
 
       try {
         const onlineMarathons = (await marathonService.getMarathons()) as Marathon[];
+
         loadedMarathons = onlineMarathons.length
           ? mergeById(localMarathons, onlineMarathons)
           : localMarathons;
@@ -251,25 +234,30 @@ export default function App() {
       }
 
       try {
-        const onlineSubmissions = await submissionService.getSubmissions();
+        const serviceSubmissions = await submissionService.getSubmissions();
         const latestLocalSubmissions = loadLocalSubmissions();
 
         loadedSubmissions = mergeById(
           localSubmissions,
           latestLocalSubmissions,
-          onlineSubmissions
+          serviceSubmissions
         ) as Submission[];
 
         saveLocalSubmissions(loadedSubmissions);
       } catch (error) {
-        console.warn('Submissions online load failed, using local:', error);
+        console.warn('Submissions load failed, using local:', error);
       }
 
       try {
-        const onlineUsers = await playerService.getAllPlayers();
-        loadedUsers = mergeById(localUsers, onlineUsers) as User[];
+        const serviceUsers = await playerService.getAllPlayers();
+
+        loadedUsers = mergeById(
+          localUsers,
+          serviceUsers,
+          sessionUser ? [sessionUser] : []
+        ).filter(isActivePlayer);
       } catch (error) {
-        console.warn('Players online load failed, using local:', error);
+        console.warn('Players load failed, using local:', error);
       }
 
       const latestRecords = storageService.loadData<any[]>(
@@ -277,7 +265,7 @@ export default function App() {
         []
       );
 
-      setCurrentUser(sessionUser || localCurrentUser);
+      setCurrentUser(sessionUser || null);
       setMarathons(loadedMarathons);
       setSubmissions(loadedSubmissions);
       setUsers(loadedUsers);
@@ -312,6 +300,18 @@ export default function App() {
     refreshFromLocal();
   }
 
+  function clearAuthForm() {
+    setForm({
+      identifier: '',
+      password: '',
+      firstName: '',
+      lastName: '',
+      email: '',
+      phone: '',
+      nickname: '',
+    });
+  }
+
   async function handleLogin(event: FormEvent) {
     event.preventDefault();
 
@@ -326,9 +326,11 @@ export default function App() {
       storageService.saveData(storageKeys.currentUserId, user.id);
 
       setCurrentUser(user);
-      setMessage('წარმატებით შეხვედით თამაშში.');
+      setUsers(loadLocalUsers(user));
+      setMessage('წარმატებით შეხვედით თქვენს კაბინეტში.');
       setTab('challenges');
-      setActiveCabinetTab('challenges');
+      setActiveCabinetTab('progress');
+      clearAuthForm();
 
       await loadAppState();
     } catch (error: any) {
@@ -363,9 +365,11 @@ export default function App() {
       storageService.saveData(storageKeys.currentUserId, user.id);
 
       setCurrentUser(user);
-      setMessage('რეგისტრაცია წარმატებით დასრულდა.');
+      setUsers(loadLocalUsers(user));
+      setMessage('რეგისტრაცია დასრულდა. თქვენი კაბინეტი შენახულია.');
       setTab('challenges');
-      setActiveCabinetTab('challenges');
+      setActiveCabinetTab('progress');
+      clearAuthForm();
 
       await loadAppState();
     } catch (error: any) {
@@ -379,7 +383,7 @@ export default function App() {
     await authService.logoutPlayer();
     setCurrentUser(null);
     setTab('home');
-    setMessage('პროფილიდან გამოსვლა შესრულდა.');
+    setMessage('პროფილიდან გამოსვლა შესრულდა. შესვლას ისევ შეძლებთ ელფოსტით და პაროლით.');
     await loadAppState();
   }
 
@@ -390,21 +394,47 @@ export default function App() {
 
     storageService.saveData(storageKeys.currentUser, updated);
     setCurrentUser(updated);
+    setUsers(loadLocalUsers(updated));
     await loadAppState();
 
     return updated;
   }
 
   async function handleLeaveGame() {
-    await handleLogout();
-    return true;
+    if (!currentUser) return false;
+
+    const confirmed = window.confirm(
+      'ნამდვილად გსურთ კაბინეტის გაუქმება? საჯარო აქტივობების ისტორია დარჩება, მაგრამ ამ კაბინეტში შესვლა აღარ შეგეძლებათ.'
+    );
+
+    if (!confirmed) return false;
+
+    try {
+      await playerService.deactivatePlayer(currentUser.id);
+      await authService.logoutPlayer();
+
+      setCurrentUser(null);
+      setTab('home');
+      setMessage('კაბინეტი გაუქმდა. საჯარო აქტივობების ისტორია შენარჩუნებულია.');
+      await loadAppState();
+
+      return true;
+    } catch (error: any) {
+      setErrorMessage(error?.message || 'კაბინეტის გაუქმება ვერ მოხერხდა.');
+      return false;
+    }
   }
 
   async function handleLandingVote(submissionId: string) {
     try {
       setErrorMessage('');
 
-      const voterId = currentUser?.id || getOrCreateGuestVoterId();
+      const voterId =
+        currentUser?.id ||
+        localStorage.getItem('bifurcation_guest_voter_id') ||
+        `guest-voter-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+      localStorage.setItem('bifurcation_guest_voter_id', voterId);
 
       await submissionService.voteSubmission(submissionId, voterId);
 
@@ -420,20 +450,24 @@ export default function App() {
   }
 
   function handleLandingSetCurrentTab(nextTab: string) {
-    if (nextTab === 'cabinet') {
-      setTab('challenges');
+    if (nextTab === 'home') {
+      setTab('home');
       return;
     }
 
     if (
-      nextTab === 'home' ||
-      nextTab === 'marathons' ||
+      nextTab === 'cabinet' ||
       nextTab === 'challenges' ||
+      nextTab === 'marathons' ||
       nextTab === 'submissions' ||
-      nextTab === 'leaderboard' ||
-      nextTab === 'profile'
+      nextTab === 'leaderboard'
     ) {
-      setTab(nextTab);
+      setTab('challenges');
+      return;
+    }
+
+    if (nextTab === 'profile' || nextTab === 'login' || nextTab === 'register') {
+      setTab('profile');
     }
   }
 
@@ -465,65 +499,9 @@ export default function App() {
     reader.readAsText(file);
   }
 
-  const leaderboard = useMemo(() => {
-    return users
-      .filter(user => !user.isAdmin && !user.banned)
-      .map(user => {
-        const userSubmissions = submissions.filter(
-          submission => submission.playerId === user.id
-        );
-
-        const publicSubmissions = userSubmissions.filter(
-          submission =>
-            submission.visibility === 'public' ||
-            (submission as any).publishToWall === true ||
-            (submission as any).publish_to_wall === true
-        );
-
-        const votesReceived = userSubmissions.reduce(
-          (sum, submission) =>
-            sum +
-            (submission.votes ||
-              submission.likes ||
-              submission.likedBy?.length ||
-              submission.votedUserIds?.length ||
-              0),
-          0
-        );
-
-        return {
-          id: user.id,
-          nickname: user.nickname || 'მოთამაშე',
-          avatar:
-            user.avatar ||
-            `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(
-              user.nickname || user.email || user.id
-            )}`,
-          points: user.points || 0,
-          completedCount:
-            user.completedChallenges?.length || userSubmissions.length || 0,
-          publicCount:
-            user.publicChallenges?.length || publicSubmissions.length || 0,
-          votesReceived: user.votesReceived || votesReceived || 0,
-          braveryBonuses: user.braveryBonuses || 0,
-          isAdmin: user.isAdmin,
-        };
-      })
-      .sort((a, b) => {
-        return (
-          b.points - a.points ||
-          b.completedCount - a.completedCount ||
-          b.votesReceived - a.votesReceived
-        );
-      });
-  }, [users, submissions]);
-
   const nav: { id: Tab; label: string; icon: ReactNode }[] = [
     { id: 'home', label: 'მთავარი', icon: <Home size={18} /> },
-    { id: 'marathons', label: 'მარათონები', icon: <Trophy size={18} /> },
-    { id: 'challenges', label: 'გამოწვევები', icon: <PlayCircle size={18} /> },
-    { id: 'submissions', label: 'კედელი', icon: <Video size={18} /> },
-    { id: 'leaderboard', label: 'ლიდერები', icon: <Users size={18} /> },
+    { id: 'challenges', label: 'ჩემი კაბინეტი', icon: <PlayCircle size={18} /> },
     {
       id: 'profile',
       label: currentUser ? 'პროფილი' : 'შესვლა',
@@ -656,73 +634,6 @@ export default function App() {
         />
       ) : (
         <main className="mx-auto max-w-7xl px-4 py-8">
-          {tab === 'marathons' && (
-            <section>
-              <SectionTitle
-                title="მარათონები"
-                subtitle="აირჩიე თვე და გადადი შესაბამის გამოწვევებზე."
-              />
-
-              {marathons.length === 0 ? (
-                <EmptyBox text="მარათონები ჯერ არ არის ჩატვირთული." />
-              ) : (
-                <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-                  {marathons.map(marathon => {
-                    const shortId = shortMarathonId(marathon.id);
-                    const count = marathon.challenges?.length || 0;
-
-                    return (
-                      <article
-                        key={marathon.id}
-                        className="rounded-[1.6rem] bg-white p-6 shadow-lg shadow-slate-200"
-                      >
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-bold ${
-                            marathon.status === 'active'
-                              ? 'bg-emerald-100 text-emerald-700'
-                              : 'bg-slate-100 text-slate-600'
-                          }`}
-                        >
-                          {marathon.status}
-                        </span>
-
-                        <h3 className="mt-4 text-2xl font-black">
-                          {marathon.title_ka || marathon.title}
-                        </h3>
-
-                        <p className="mt-2 text-sm text-slate-500">
-                          {marathon.startDate
-                            ? new Date(marathon.startDate).toLocaleDateString()
-                            : 'დაწყება'}{' '}
-                          —{' '}
-                          {marathon.endDate
-                            ? new Date(marathon.endDate).toLocaleDateString()
-                            : 'დასრულება'}
-                        </p>
-
-                        <p className="mt-3 font-semibold text-violet-600">
-                          {count} გამოწვევა
-                        </p>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedMarathonId(shortId);
-                            setActiveCabinetTab('challenges');
-                            setTab('challenges');
-                          }}
-                          className="mt-6 w-full rounded-2xl bg-violet-600 px-4 py-3 font-bold text-white"
-                        >
-                          ნახვა
-                        </button>
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          )}
-
           {tab === 'challenges' && (
             <PlayerCabinet
               currentUser={currentUser}
@@ -747,32 +658,6 @@ export default function App() {
             />
           )}
 
-          {tab === 'submissions' && (
-            <section>
-              <SectionTitle
-                title="საჯარო კედელი"
-                subtitle="აქ გამოჩნდება მონაწილეების მიერ მთავარ გვერდზე გამოსაქვეყნებლად დადასტურებული ვიდეო, ფოტო, აუდიო და ტექსტური აქტივობები."
-              />
-
-              <VideoFeed
-                currentUser={currentUser}
-                onStateUpdate={handleStateUpdate}
-                lang="ka"
-              />
-            </section>
-          )}
-
-          {tab === 'leaderboard' && (
-            <section>
-              <SectionTitle
-                title="ლიდერები"
-                subtitle="რეიტინგი ითვლება ქულების, შესრულებული გამოწვევებისა და მიღებული ხმების მიხედვით."
-              />
-
-              <Leaderboard leaderboard={leaderboard} lang="ka" />
-            </section>
-          )}
-
           {tab === 'profile' && (
             <section className="grid gap-6 lg:grid-cols-2">
               <div className="rounded-[2rem] bg-white p-6 shadow-xl">
@@ -780,8 +665,8 @@ export default function App() {
                   title={currentUser ? 'პროფილი' : 'შესვლა / რეგისტრაცია'}
                   subtitle={
                     currentUser
-                      ? 'თქვენ უკვე შესული ხართ თამაშში.'
-                      : 'Supabase Auth-ის საშუალებით შექმენით ან გახსენით პროფილი.'
+                      ? 'თქვენი კაბინეტი შენახულია. გასვლის შემდეგ დაბრუნება შეგიძლიათ ელფოსტით და პაროლით.'
+                      : 'შექმენით კაბინეტი ან დაბრუნდით უკვე შექმნილ კაბინეტში.'
                   }
                 />
 
@@ -812,6 +697,14 @@ export default function App() {
                     >
                       <LogOut size={18} />
                       გამოსვლა
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleLeaveGame}
+                      className="w-full rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3 text-sm font-black text-rose-700"
+                    >
+                      კაბინეტის გაუქმება
                     </button>
                   </div>
                 ) : (
@@ -851,7 +744,7 @@ export default function App() {
                         onChange={event =>
                           setForm({ ...form, identifier: event.target.value })
                         }
-                        placeholder="ელფოსტა"
+                        placeholder="ელფოსტა ან ნიკნეიმი"
                         className="w-full rounded-2xl border p-3"
                         required
                       />
@@ -938,7 +831,7 @@ export default function App() {
               <div className="rounded-[2rem] bg-white p-6 shadow-xl">
                 <SectionTitle
                   title="Backup"
-                  subtitle="შეგიძლიათ ჩამოტვირთოთ ან აღადგინოთ თამაშის მონაცემების ასლი."
+                  subtitle="სატესტო რეჟიმში შეგიძლიათ მონაცემების ასლის ჩამოტვირთვა ან აღდგენა."
                 />
 
                 <button
@@ -981,14 +874,6 @@ function SectionTitle({
     <div className="mb-6">
       <h2 className="text-3xl font-black text-slate-950">{title}</h2>
       <p className="mt-2 text-slate-500">{subtitle}</p>
-    </div>
-  );
-}
-
-function EmptyBox({ text }: { text: string }) {
-  return (
-    <div className="rounded-3xl border border-violet-100 bg-white p-10 text-center text-sm font-bold text-slate-400">
-      {text}
     </div>
   );
 }
