@@ -529,32 +529,32 @@ export default function App() {
   const appBackground = tab === 'home' ? 'bg-[#04020d]' : 'bg-[#FAF8FF]';
 
   return (
-    <div className={`min-h-screen ${appBackground}`}>
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#050311]/90 text-white backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between">
+    <div className={`min-h-screen w-full overflow-x-hidden ${appBackground}`}>
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#050311]/95 text-white backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-3 py-3 sm:px-4 sm:py-4">
           <button
             type="button"
             onClick={() => setTab('home')}
-            className="text-left"
+            className="min-w-0 text-left"
           >
-            <p className="text-sm font-semibold uppercase tracking-[0.35em] text-violet-400">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-violet-400 sm:text-sm sm:tracking-[0.35em]">
               Bifurcation
             </p>
-            <h1 className="text-2xl font-black text-white">
+            <h1 className="truncate text-lg font-black text-white sm:text-2xl">
               ბიფურკაცია — ონლაინ თამაში
             </h1>
           </button>
 
-          <div className="flex items-center gap-3 rounded-2xl bg-white/8 px-4 py-2">
+          <div className="shrink-0 flex items-center gap-2 rounded-2xl bg-white/8 px-2.5 py-2 sm:gap-3 sm:px-4">
             <img
               src={displayUser.avatar}
-              className="h-10 w-10 rounded-full object-cover"
+              className="h-8 w-8 rounded-full object-cover sm:h-10 sm:w-10"
               alt="avatar"
             />
 
             <div>
-              <p className="font-semibold text-white">@{displayUser.nickname}</p>
-              <p className="text-sm text-slate-300">
+              <p className="max-w-[100px] truncate text-sm font-semibold text-white sm:max-w-[160px] sm:text-base">@{displayUser.nickname}</p>
+              <p className="text-[11px] text-slate-300 sm:text-sm">
                 {currentUser ? `${displayUser.points || 0} ქულა` : 'სტუმარი'}
               </p>
             </div>
@@ -572,13 +572,13 @@ export default function App() {
           </div>
         </div>
 
-        <nav className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-4 pb-4">
+        <nav className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-3 pb-3 sm:px-4 sm:pb-4 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {nav.map(item => (
             <button
               key={item.id}
               type="button"
               onClick={() => setTab(item.id)}
-              className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
+              className={`shrink-0 flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold transition sm:gap-2 sm:px-4 sm:text-sm ${
                 tab === item.id
                   ? 'bg-violet-600 text-white shadow-lg shadow-violet-900/30'
                   : 'bg-white/8 text-slate-200 hover:bg-white/12'
@@ -635,7 +635,7 @@ export default function App() {
           }}
         />
       ) : (
-        <main className="mx-auto max-w-7xl px-4 py-8">
+        <main className="mx-auto max-w-7xl px-3 py-5 sm:px-4 sm:py-8">
           {tab === 'about' && <AboutPage />}
 
           {tab === 'challenges' && (
@@ -663,8 +663,8 @@ export default function App() {
           )}
 
           {tab === 'profile' && (
-            <section className="grid gap-6 lg:grid-cols-2">
-              <div className="rounded-[2rem] bg-white p-6 shadow-xl">
+            <section className="grid gap-5 lg:grid-cols-2">
+              <div className="rounded-[1.5rem] bg-white p-4 shadow-xl sm:rounded-[2rem] sm:p-6">
                 <SectionTitle
                   title={currentUser ? 'პროფილი' : 'შესვლა / რეგისტრაცია'}
                   subtitle={
@@ -833,7 +833,7 @@ export default function App() {
               </div>
 
               <div className="space-y-6">
-                <div className="rounded-[2rem] border border-amber-100 bg-gradient-to-br from-amber-50 via-white to-violet-50 p-6 shadow-xl">
+                <div className="rounded-[1.5rem] border border-amber-100 bg-gradient-to-br from-amber-50 via-white to-violet-50 p-4 shadow-xl sm:rounded-[2rem] sm:p-6">
                   <SectionTitle
                     title="პრიზი და მხარდაჭერა"
                     subtitle="თამაში უფასოა, გამარჯვებული კი იღებს ფულად პრიზს."
@@ -863,7 +863,7 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="rounded-[2rem] bg-white p-6 shadow-xl">
+                <div className="rounded-[1.5rem] bg-white p-4 shadow-xl sm:rounded-[2rem] sm:p-6">
                   <SectionTitle
                     title="Backup"
                     subtitle="სატესტო რეჟიმში შეგიძლიათ მონაცემების ასლის ჩამოტვირთვა ან აღდგენა."
@@ -908,7 +908,7 @@ function SectionTitle({
 }) {
   return (
     <div className="mb-6">
-      <h2 className="text-3xl font-black text-slate-950">{title}</h2>
+      <h2 className="text-2xl font-black text-slate-950 sm:text-3xl">{title}</h2>
       <p className="mt-2 text-slate-500">{subtitle}</p>
     </div>
   );
@@ -917,15 +917,15 @@ function SectionTitle({
 
 function AboutPage() {
   return (
-    <section className="mx-auto max-w-5xl space-y-8">
-      <div className="overflow-hidden rounded-[2rem] bg-[#15123A] p-8 text-white shadow-xl md:p-12">
+    <section className="mx-auto max-w-5xl space-y-6 sm:space-y-8">
+      <div className="overflow-hidden rounded-[1.5rem] bg-[#15123A] p-5 text-white shadow-xl sm:rounded-[2rem] sm:p-8 md:p-12">
         <div className="grid gap-8 md:grid-cols-[1.2fr_0.8fr] md:items-center">
           <div>
             <p className="mb-4 inline-flex rounded-full bg-white/10 px-4 py-2 text-xs font-black uppercase tracking-widest text-violet-200">
               პლატფორმის შესახებ
             </p>
 
-            <h2 className="text-3xl font-black leading-tight md:text-4xl">
+            <h2 className="text-2xl font-black leading-tight sm:text-3xl md:text-4xl">
               ბიფურკაციის შესახებ
             </h2>
 
@@ -995,13 +995,13 @@ function AboutPage() {
           </h3>
 
           <p className="mt-2 text-xs font-bold uppercase tracking-widest text-slate-400">
-            სამეცნიერო-ინტელექტუალური კლუბი „თაობათა დიალოგი“ — RICDOG
+            კვლევა-ინტელექტუალური კლუბი „თაობათა დიალოგი“ — RICDOG
           </p>
 
           <div className="mt-6 space-y-4 text-sm leading-7 text-slate-600">
             <p>
-              პროექტის განმახორციელებელია სამეცნიერო-ინტელექტუალური კლუბი
-              „თაობათა დიალოგი“, რომელიც არასამთავრობო ორგანიზაციაა. RICDOG-ი მუშაობს
+              პროექტის განმახორციელებელია კვლევა-ინტელექტუალური კლუბი
+              „თაობათა დიალოგი“ — სამოქალაქო ორგანიზაცია, რომელიც მუშაობს
               ახალგაზრდების განვითარებაზე, საზოგადოებრივ მონაწილეობაზე,
               მშვიდობის კულტურაზე და შემოქმედებით განათლებაზე.
             </p>
@@ -1029,8 +1029,8 @@ function AboutPage() {
         </div>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-3">
-        <div className="rounded-3xl border border-amber-100 bg-amber-50 p-6 shadow-sm">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="rounded-3xl border border-amber-100 bg-amber-50 p-4 shadow-sm sm:p-6">
           <div className="mb-4 text-3xl">🏆</div>
           <h3 className="text-lg font-black text-slate-950">ფულადი პრიზი</h3>
           <p className="mt-3 text-sm leading-7 text-slate-600">
@@ -1040,7 +1040,7 @@ function AboutPage() {
           </p>
         </div>
 
-        <div className="rounded-3xl border border-violet-100 bg-violet-50 p-6 shadow-sm">
+        <div className="rounded-3xl border border-violet-100 bg-violet-50 p-4 shadow-sm sm:p-6">
           <div className="mb-4 text-3xl">💜</div>
           <h3 className="text-lg font-black text-slate-950">ნებაყოფლობითი დონაცია</h3>
           <p className="mt-3 text-sm leading-7 text-slate-600">
@@ -1049,7 +1049,7 @@ function AboutPage() {
           </p>
         </div>
 
-        <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-6 shadow-sm">
+        <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4 shadow-sm sm:p-6">
           <div className="mb-4 text-3xl">🌱</div>
           <h3 className="text-lg font-black text-slate-950">რატომ გვჭირდება მხარდაჭერა?</h3>
           <p className="mt-3 text-sm leading-7 text-slate-600">
