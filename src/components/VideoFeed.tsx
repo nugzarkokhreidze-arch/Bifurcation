@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Heart, Lock, Volume2, X } from 'lucide-react';
 
 import { Submission, User } from '../types';
@@ -10,6 +10,18 @@ interface VideoFeedProps {
   currentUser: User | null;
   onStateUpdate: () => void;
   lang?: 'ka' | 'en';
+}
+
+const EXTRA_SUBMISSIONS_KEY = 'bifurcation_submissions';
+
+function getSubmissionStorageKeys() {
+  return Array.from(
+    new Set(
+      [storageKeys.submissions, EXTRA_SUBMISSIONS_KEY].filter(
+        (key): key is string => Boolean(key)
+      )
+    )
+  );
 }
 
 function getOrCreateGuestVoterId() {
@@ -32,8 +44,10 @@ function getMediaUrl(submission: any) {
   return (
     submission.fileUrl ||
     submission.videoUrl ||
+    submission.localPreviewUrl ||
     submission.file_url ||
     submission.video_url ||
+    submission.local_preview_url ||
     ''
   );
 }
@@ -44,6 +58,8 @@ function getSubmissionText(submission: any) {
     submission.textDescription ||
     submission.comment ||
     submission.description ||
+    submission.reflection_text ||
+    submission.text_description ||
     ''
   );
 }
@@ -58,6 +74,17 @@ function getCreatedTime(submission: any) {
   ).getTime();
 }
 
+function getSubmissionUniqueKey(submission: any) {
+  return (
+    submission.id ||
+    submission.remoteId ||
+    submission.remote_id ||
+    `${submission.playerId || submission.player_id || 'player'}-${
+      submission.challengeId || submission.challenge_id || 'challenge'
+    }-${submission.createdAt || submission.created_at || Date.now()}`
+  );
+}
+
 function detectMediaType(submission: any) {
   const type = submission.submissionType || submission.submission_type || '';
   const url = getMediaUrl(submission);
@@ -65,7 +92,7 @@ function detectMediaType(submission: any) {
   if (
     type === 'photo' ||
     url.startsWith('data:image/') ||
-    url.match(/\.(jpeg|jpg|gif|png|webp|svg)($|\?)/i)
+    url.match(/\.(jpeg|jpg|gif|png|webp|svg|heic|heif)($|\?)/i)
   ) {
     return 'photo';
   }
@@ -73,7 +100,7 @@ function detectMediaType(submission: any) {
   if (
     type === 'audio' ||
     url.startsWith('data:audio/') ||
-    url.match(/\.(mp3|wav|ogg|aac|m4a)($|\?)/i)
+    url.match(/\.(mp3|wav|ogg|aac|m4a|mpeg)($|\?)/i)
   ) {
     return 'audio';
   }
@@ -81,7 +108,7 @@ function detectMediaType(submission: any) {
   if (
     type === 'video' ||
     url.startsWith('data:video/') ||
-    url.match(/\.(mp4|webm|mov|m4v)($|\?)/i)
+    url.match(/\.(mp4|webm|mov|m4v|quicktime)($|\?)/i)
   ) {
     return 'video';
   }
@@ -95,47 +122,123 @@ function mergeSubmissions(...lists: any[][]) {
   const map = new Map<string, any>();
 
   lists.flat().forEach(item => {
-    if (!item?.id) return;
+    if (!item) return;
 
-    const previous = map.get(item.id) || {};
+    const key = getSubmissionUniqueKey(item);
+    const previous = map.get(key) || {};
 
-    map.set(item.id, {
+    const likedBy =
+      item.likedBy ||
+      item.liked_by ||
+      item.votedUserIds ||
+      item.voted_user_ids ||
+      previous.likedBy ||
+      previous.liked_by ||
+      previous.votedUserIds ||
+      previous.voted_user_ids ||
+      [];
+
+    const votedUserIds =
+      item.votedUserIds ||
+      item.voted_user_ids ||
+      item.likedBy ||
+      item.liked_by ||
+      previous.votedUserIds ||
+      previous.voted_user_ids ||
+      previous.likedBy ||
+      previous.liked_by ||
+      [];
+
+    map.set(key, {
       ...previous,
       ...item,
-      likedBy:
-        item.likedBy ||
-        item.liked_by ||
-        item.votedUserIds ||
-        previous.likedBy ||
-        previous.liked_by ||
-        previous.votedUserIds ||
-        [],
-      votedUserIds:
-        item.votedUserIds ||
-        item.voted_user_ids ||
-        item.likedBy ||
-        previous.votedUserIds ||
-        previous.voted_user_ids ||
-        previous.likedBy ||
-        [],
-      votes:
-        item.votes ??
-        item.likes ??
-        previous.votes ??
-        previous.likes ??
-        0,
-      likes:
-        item.likes ??
-        item.votes ??
-        previous.likes ??
-        previous.votes ??
-        0,
+
+      id: item.id || previous.id || key,
+      remoteId: item.remoteId || item.remote_id || previous.remoteId || '',
+
+      playerId: item.playerId || item.player_id || previous.playerId || '',
+      challengeId:
+        item.challengeId || item.challenge_id || previous.challengeId || '',
+      marathonId: item.marathonId || item.marathon_id || previous.marathonId || '',
+
+      submissionType:
+        item.submissionType ||
+        item.submission_type ||
+        previous.submissionType ||
+        'text',
+
+      visibility: item.visibility || previous.visibility || 'public',
+      publishToWall:
+        item.publishToWall ??
+        item.publish_to_wall ??
+        previous.publishToWall ??
+        previous.publish_to_wall ??
+        false,
+      publish_to_wall:
+        item.publish_to_wall ??
+        item.publishToWall ??
+        previous.publish_to_wall ??
+        previous.publishToWall ??
+        false,
+      isPublic:
+        item.isPublic ??
+        item.is_public ??
+        previous.isPublic ??
+        previous.is_public ??
+        false,
+
+      approved:
+        item.approved ??
+        item.isApproved ??
+        item.is_approved ??
+        previous.approved ??
+        true,
+
+      status: item.status || previous.status || 'completed',
+
+      likedBy,
+      votedUserIds,
+
+      votes: item.votes ?? item.likes ?? likedBy.length ?? previous.votes ?? 0,
+      likes: item.likes ?? item.votes ?? likedBy.length ?? previous.likes ?? 0,
+
+      createdAt:
+        item.createdAt ||
+        item.created_at ||
+        previous.createdAt ||
+        previous.created_at ||
+        new Date().toISOString(),
+
+      updatedAt:
+        item.updatedAt ||
+        item.updated_at ||
+        previous.updatedAt ||
+        previous.updated_at ||
+        new Date().toISOString(),
     });
   });
 
   return Array.from(map.values()).sort(
     (a, b) => getCreatedTime(b) - getCreatedTime(a)
   );
+}
+
+function loadLocalSubmissions() {
+  const lists = getSubmissionStorageKeys().map(key =>
+    storageService.loadData<any[]>(key, [])
+  );
+
+  return mergeSubmissions(...lists);
+}
+
+function saveLocalSubmissions(submissions: any[]) {
+  for (const key of getSubmissionStorageKeys()) {
+    try {
+      storageService.saveData(key, submissions);
+    } catch (error) {
+      console.warn(`Could not save submissions to ${key}:`, error);
+    }
+  }
 }
 
 function buildChallengeLookup(marathons: any[]) {
@@ -153,6 +256,45 @@ function buildChallengeLookup(marathons: any[]) {
   });
 
   return map;
+}
+
+function isPublicSubmission(submission: any) {
+  return (
+    submission.visibility === 'public' ||
+    submission.publishToWall === true ||
+    submission.publish_to_wall === true ||
+    submission.isPublic === true ||
+    submission.is_public === true
+  );
+}
+
+function updateLocalLike(submissionId: string, voterId: string) {
+  const localSubmissions = loadLocalSubmissions();
+
+  const updated = localSubmissions.map(submission => {
+    if (submission.id !== submissionId && submission.remoteId !== submissionId) {
+      return submission;
+    }
+
+    const likedBy = Array.from(
+      new Set([
+        ...(submission.likedBy || []),
+        ...(submission.votedUserIds || []),
+        voterId,
+      ])
+    );
+
+    return {
+      ...submission,
+      likedBy,
+      votedUserIds: likedBy,
+      votes: likedBy.length,
+      likes: likedBy.length,
+      updatedAt: new Date().toISOString(),
+    };
+  });
+
+  saveLocalSubmissions(updated);
 }
 
 export default function VideoFeed({
@@ -173,12 +315,13 @@ export default function VideoFeed({
       setLoading(true);
       setErrorMessage('');
 
-      const localSubmissions = storageService.loadData<any[]>(
-        storageKeys.submissions,
-        []
-      );
+      const localSubmissions = loadLocalSubmissions();
 
-      const localUsers = storageService.loadData<User[]>(storageKeys.users, []);
+      const localUsers = [
+        ...storageService.loadData<User[]>(storageKeys.users, []),
+        ...storageService.loadData<User[]>((storageKeys as any).players, []),
+      ];
+
       const localCurrentUser = storageService.loadData<User | null>(
         storageKeys.currentUser,
         null
@@ -198,6 +341,8 @@ export default function VideoFeed({
       }
 
       const merged = mergeSubmissions(localSubmissions, onlineSubmissions);
+      saveLocalSubmissions(merged);
+
       const challengeLookup = buildChallengeLookup(localMarathons);
 
       const allUsers = [
@@ -207,16 +352,13 @@ export default function VideoFeed({
       ];
 
       const publicSubmissions = merged
-        .filter(submission => {
-          return (
-            submission.visibility === 'public' ||
-            submission.publishToWall === true ||
-            submission.publish_to_wall === true
-          );
-        })
+        .filter(submission => isPublicSubmission(submission))
         .map(submission => {
-          const player = allUsers.find(user => user.id === submission.playerId);
-          const challenge = challengeLookup.get(submission.challengeId);
+          const playerId = submission.playerId || submission.player_id;
+          const challengeId = submission.challengeId || submission.challenge_id;
+
+          const player = allUsers.find(user => user.id === playerId);
+          const challenge = challengeLookup.get(challengeId);
 
           const playerNickname =
             submission.playerNickname ||
@@ -239,30 +381,35 @@ export default function VideoFeed({
               : challenge?.title_en || challenge?.title) ||
             (lang === 'ka' ? 'გამოწვევა' : 'Challenge');
 
+          const likedBy =
+            submission.likedBy ||
+            submission.liked_by ||
+            submission.votedUserIds ||
+            submission.voted_user_ids ||
+            [];
+
           return {
             ...submission,
+            playerId,
+            challengeId,
             playerNickname,
             playerAvatar,
             challengeTitle,
-            likedBy:
-              submission.likedBy ||
-              submission.liked_by ||
-              submission.votedUserIds ||
-              [],
+            likedBy,
             votedUserIds:
               submission.votedUserIds ||
               submission.voted_user_ids ||
-              submission.likedBy ||
+              likedBy ||
               [],
             votes:
               submission.votes ||
               submission.likes ||
-              submission.likedBy?.length ||
+              likedBy.length ||
               0,
             likes:
               submission.likes ||
               submission.votes ||
-              submission.likedBy?.length ||
+              likedBy.length ||
               0,
           };
         });
@@ -280,9 +427,15 @@ export default function VideoFeed({
     }
   }
 
-useEffect(() => {
-  loadPublicSubmissions();
-}, [currentUser?.id]);
+  useEffect(() => {
+    loadPublicSubmissions();
+
+    const unsubscribe = storageService.subscribe(() => {
+      loadPublicSubmissions();
+    });
+
+    return unsubscribe;
+  }, [currentUser?.id]);
 
   async function handleLike(submission: any) {
     try {
@@ -308,15 +461,34 @@ useEffect(() => {
         );
       }
 
-      await submissionService.voteSubmission(submission.id, voterId);
+      const likedBy = submission.likedBy || submission.votedUserIds || [];
+
+      if (likedBy.includes(voterId)) {
+        throw new Error(
+          lang === 'ka'
+            ? 'ამ აქტივობაზე მხარდაჭერა უკვე დაფიქსირებულია.'
+            : 'You have already liked this submission.'
+        );
+      }
+
+      updateLocalLike(submission.id, voterId);
+
+      try {
+        await submissionService.voteSubmission(
+          submission.remoteId || submission.id,
+          voterId
+        );
+      } catch (error) {
+        console.warn('Online vote failed, local vote kept:', error);
+      }
 
       await loadPublicSubmissions();
       await onStateUpdate();
 
       setInfoMessage(
         lang === 'ka'
-          ? 'მხარდაჭერა დაფიქსირდა. ავტორს დაემატება შესაბამისი ქულა.'
-          : 'Support recorded. Points will be added to the author.'
+          ? 'მხარდაჭერა დაფიქსირდა.'
+          : 'Support recorded.'
       );
     } catch (error: any) {
       console.error('Like error:', error);
