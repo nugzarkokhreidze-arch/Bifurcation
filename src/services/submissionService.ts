@@ -1,468 +1,450 @@
-import { Submission } from '../types';
-import { supabase } from './supabaseClient';
-import { playerService } from './playerService';
+import type { Submission, User } from '../types';
+import { POINTS_CONFIG } from './pointsService';
 import { storageKeys, storageService } from './storageService';
 
-type CreateSubmissionInput = {
-  playerId: string;
-  challengeId: string;
-  marathonId: string;
-  submissionType: 'video' | 'photo' | 'audio' | 'reflection' | 'text';
-  visibility: 'public' | 'hidden';
-  comment?: string;
-  reflectionText?: string;
-  file?: File | null;
-};
+const EXTRA_SUBMISSIONS_KEY = 'bifurcation_submissions';
+const LEGACY_SUBMISSIONS_KEY = 'submissions';
 
-function makeId(prefix: string) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+function getSubmissionStorageKeys() {
+  return Array.from(
+    new Set(
+      [
+        storageKeys.submissions,
+        EXTRA_SUBMISSIONS_KEY,
+        LEGACY_SUBMISSIONS_KEY,
+      ].filter((key): key is string => Boolean(key))
+    )
+  );
 }
 
-function safeFileName(fileName: string) {
-  return fileName
-    .replace(/\s+/g, '-')
-    .replace(/[^\w.\-ა-ჰ]/g, '')
-    .toLowerCase();
+function makeLocalSubmissionId() {
+  return `sub-local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function normalizeArray(value: any): string[] {
-  if (Array.isArray(value)) return value;
-
-  if (!value) return [];
-
-  try {
-    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+function getCreatedTime(item: any) {
+  return new Date(
+    item.createdAt ||
+      item.created_at ||
+      item.updatedAt ||
+      item.updated_at ||
+      0
+  ).getTime();
 }
 
-function mapSubmissionRow(row: any): Submission {
-  return {
-    id: row.id,
-    playerId: row.player_id,
-    challengeId: row.challenge_id,
-    marathonId: row.marathon_id || undefined,
-    videoUrl: row.video_url || row.file_url || '',
-    fileUrl: row.file_url || row.video_url || '',
-    filePath: row.file_path || undefined,
-    fileName: row.file_name || undefined,
-    fileMime: row.file_mime || undefined,
-    fileSize: row.file_size || undefined,
-    submissionType: row.submission_type || 'text',
-    visibility: row.visibility || 'public',
-    comment: row.comment || undefined,
-    reflectionText: row.reflection_text || row.comment || undefined,
-    approved: row.approved ?? true,
-    votes: row.votes ?? row.likes ?? 0,
-    likes: row.likes ?? row.votes ?? 0,
-    aiReaction: row.ai_reaction || undefined,
-    aiReaction_en: row.ai_reaction_en || undefined,
-    createdAt: row.created_at || new Date().toISOString(),
-    updatedAt: row.updated_at || undefined,
-    safetyFlag: row.safety_flag ?? false,
-    votedUserIds: normalizeArray(row.voted_user_ids),
-    likedBy: normalizeArray(row.liked_by),
-    playerNickname: row.player_nickname || undefined,
-    playerAvatar: row.player_avatar || undefined,
-    challengeTitle: row.challenge_title || undefined,
-  };
+function getSubmissionKey(item: any) {
+  return (
+    item.id ||
+    item.remoteId ||
+    item.remote_id ||
+    `${item.playerId || item.player_id || 'player'}-${
+      item.challengeId || item.challenge_id || 'challenge'
+    }-${item.createdAt || item.created_at || Date.now()}`
+  );
 }
 
-function submissionToRow(submission: Submission) {
-  return {
-    id: submission.id,
-    player_id: submission.playerId,
-    challenge_id: submission.challengeId,
-    marathon_id: submission.marathonId || null,
-    video_url: submission.videoUrl || submission.fileUrl || '',
-    file_url: submission.fileUrl || submission.videoUrl || '',
-    file_path: submission.filePath || null,
-    file_name: submission.fileName || null,
-    file_mime: submission.fileMime || null,
-    file_size: submission.fileSize || null,
-    submission_type: submission.submissionType || 'text',
-    visibility: submission.visibility || 'public',
-    comment: submission.comment || null,
-    reflection_text: submission.reflectionText || submission.comment || null,
-    approved: submission.approved ?? true,
-    votes: submission.votes || 0,
-    likes: submission.likes || submission.votes || 0,
-    ai_reaction: submission.aiReaction || null,
-    ai_reaction_en: submission.aiReaction_en || null,
-    safety_flag: submission.safetyFlag || false,
-    voted_user_ids: submission.votedUserIds || [],
-    liked_by: submission.likedBy || [],
-    created_at: submission.createdAt || new Date().toISOString(),
-    updated_at: submission.updatedAt || new Date().toISOString(),
-  };
-}
+function mergeSubmissions(...lists: any[][]) {
+  const map = new Map<string, any>();
 
-function getSubmissionDate(submission: Submission) {
-  return new Date(submission.createdAt || submission.updatedAt || 0).getTime();
-}
+  lists.flat().forEach(item => {
+    if (!item) return;
 
-function mergeSubmissions(localItems: Submission[], remoteItems: Submission[]) {
-  const map = new Map<string, Submission>();
+    const key = getSubmissionKey(item);
+    const previous = map.get(key) || {};
 
-  localItems.forEach(item => {
-    if (item?.id) {
-      map.set(item.id, item);
-    }
-  });
+    const likedBy = Array.from(
+      new Set([
+        ...(previous.likedBy || []),
+        ...(previous.votedUserIds || []),
+        ...(item.likedBy || []),
+        ...(item.liked_by || []),
+        ...(item.votedUserIds || []),
+        ...(item.voted_user_ids || []),
+      ])
+    );
 
-  remoteItems.forEach(item => {
-    if (!item?.id) return;
-
-    const previous = map.get(item.id);
-
-    map.set(item.id, {
-      ...(previous || {}),
+    map.set(key, {
+      ...previous,
       ...item,
-      fileUrl: item.fileUrl || previous?.fileUrl || '',
-      videoUrl: item.videoUrl || previous?.videoUrl || '',
-      comment: item.comment || previous?.comment || '',
-      reflectionText: item.reflectionText || previous?.reflectionText || '',
-      likedBy: item.likedBy?.length ? item.likedBy : previous?.likedBy || [],
-      votedUserIds: item.votedUserIds?.length
-        ? item.votedUserIds
-        : previous?.votedUserIds || [],
-      votes: item.votes ?? previous?.votes ?? 0,
-      likes: item.likes ?? previous?.likes ?? 0,
+
+      id: item.id || previous.id || key,
+      remoteId: item.remoteId || item.remote_id || previous.remoteId || '',
+
+      playerId: item.playerId || item.player_id || previous.playerId || '',
+      userId:
+        item.userId ||
+        item.user_id ||
+        item.playerId ||
+        item.player_id ||
+        previous.userId ||
+        previous.user_id ||
+        '',
+
+      challengeId:
+        item.challengeId || item.challenge_id || previous.challengeId || '',
+      marathonId: item.marathonId || item.marathon_id || previous.marathonId || '',
+
+      submissionType:
+        item.submissionType ||
+        item.submission_type ||
+        previous.submissionType ||
+        'tiktok',
+
+      socialPlatform:
+        item.socialPlatform ||
+        item.social_platform ||
+        previous.socialPlatform ||
+        'tiktok',
+
+      socialUrl:
+        item.socialUrl ||
+        item.social_url ||
+        item.tiktokUrl ||
+        item.tiktok_url ||
+        item.externalUrl ||
+        item.external_url ||
+        previous.socialUrl ||
+        '',
+
+      tiktokUrl:
+        item.tiktokUrl ||
+        item.tiktok_url ||
+        item.socialUrl ||
+        item.social_url ||
+        item.externalUrl ||
+        item.external_url ||
+        previous.tiktokUrl ||
+        '',
+
+      externalUrl:
+        item.externalUrl ||
+        item.external_url ||
+        item.tiktokUrl ||
+        item.tiktok_url ||
+        item.socialUrl ||
+        item.social_url ||
+        previous.externalUrl ||
+        '',
+
+      visibility: item.visibility || previous.visibility || 'public',
+      publishToWall:
+        item.publishToWall ??
+        item.publish_to_wall ??
+        previous.publishToWall ??
+        previous.publish_to_wall ??
+        true,
+      publish_to_wall:
+        item.publish_to_wall ??
+        item.publishToWall ??
+        previous.publish_to_wall ??
+        previous.publishToWall ??
+        true,
+      isPublic:
+        item.isPublic ??
+        item.is_public ??
+        previous.isPublic ??
+        previous.is_public ??
+        true,
+
+      approved:
+        item.approved ??
+        item.isApproved ??
+        item.is_approved ??
+        previous.approved ??
+        true,
+
+      status: item.status || previous.status || 'completed',
+
+      likedBy,
+      votedUserIds: likedBy,
+      votes: item.votes ?? item.likes ?? likedBy.length ?? previous.votes ?? 0,
+      likes: item.likes ?? item.votes ?? likedBy.length ?? previous.likes ?? 0,
+
+      comments: item.comments || previous.comments || [],
+
+      siteViews:
+        item.siteViews ??
+        item.site_views ??
+        previous.siteViews ??
+        previous.site_views ??
+        0,
+      siteLikes:
+        item.siteLikes ??
+        item.site_likes ??
+        item.likes ??
+        previous.siteLikes ??
+        previous.site_likes ??
+        0,
+      siteComments:
+        item.siteComments ??
+        item.site_comments ??
+        (item.comments || previous.comments || []).length ??
+        0,
+
+      createdAt:
+        item.createdAt ||
+        item.created_at ||
+        previous.createdAt ||
+        previous.created_at ||
+        new Date().toISOString(),
+
+      updatedAt:
+        item.updatedAt ||
+        item.updated_at ||
+        previous.updatedAt ||
+        previous.updated_at ||
+        new Date().toISOString(),
     });
   });
 
   return Array.from(map.values()).sort(
-    (a, b) => getSubmissionDate(b) - getSubmissionDate(a)
+    (a, b) => getCreatedTime(b) - getCreatedTime(a)
   );
 }
 
-function saveSubmissionToLocal(submission: Submission) {
-  const localSubmissions = storageService.loadData<Submission[]>(
-    storageKeys.submissions,
-    []
-  );
-
-  const merged = mergeSubmissions(localSubmissions, [submission]);
-
-  storageService.saveData(storageKeys.submissions, merged);
-
-  return submission;
-}
-
-async function uploadFileToSupabase(params: {
-  playerId: string;
-  challengeId: string;
-  file: File;
-}) {
-  const fileExt = params.file.name.split('.').pop() || 'file';
-  const fileName = safeFileName(params.file.name || `submission.${fileExt}`);
-  const filePath = `${params.playerId}/${params.challengeId}/${Date.now()}-${fileName}`;
-
-  const { error: uploadError } = await supabase.storage
-    .from('submissions')
-    .upload(filePath, params.file, {
-      cacheControl: '3600',
-      upsert: false,
-      contentType: params.file.type || undefined,
-    });
-
-  if (uploadError) {
-    throw uploadError;
-  }
-
-  const { data } = supabase.storage.from('submissions').getPublicUrl(filePath);
-
-  return {
-    filePath,
-    fileUrl: data.publicUrl,
-  };
-}
-
-async function awardVotePoints(params: {
-  authorId: string;
-  voterId: string;
-  submissionId: string;
-}) {
-  if (!params.authorId || !params.voterId) return;
-  if (params.authorId === params.voterId) return;
-
+function loadSubmissionsFromKey(key: string) {
   try {
-    await playerService.addPoints(
-      params.authorId,
-      5,
-      `support-received:${params.submissionId}`
-    );
-  } catch (error) {
-    console.warn('Could not award author support points:', error);
-  }
-
-  if (!params.voterId.startsWith('guest-voter-')) {
+    return storageService.loadData<any[]>(key, []);
+  } catch {
     try {
-      await playerService.addPoints(
-        params.voterId,
-        2,
-        `support-given:${params.submissionId}`
-      );
-    } catch (error) {
-      console.warn('Could not award voter support points:', error);
+      return JSON.parse(localStorage.getItem(key) || '[]');
+    } catch {
+      return [];
     }
   }
+}
+
+function loadAllLocalSubmissions() {
+  const lists = getSubmissionStorageKeys().map(key => loadSubmissionsFromKey(key));
+  return mergeSubmissions(...lists);
+}
+
+function saveAllLocalSubmissions(items: any[]) {
+  const merged = mergeSubmissions(items);
+
+  for (const key of getSubmissionStorageKeys()) {
+    try {
+      storageService.saveData(key, merged);
+    } catch (error) {
+      console.warn(`storageService save failed for ${key}:`, error);
+    }
+
+    try {
+      localStorage.setItem(key, JSON.stringify(merged));
+    } catch (error) {
+      console.warn(`localStorage save failed for ${key}:`, error);
+    }
+  }
+
+  try {
+    window.dispatchEvent(new Event('storage'));
+  } catch {
+    // ignore
+  }
+}
+
+function updateUserPoints(playerId: string, amount: number) {
+  if (!playerId || !amount) return;
+
+  const currentUser = storageService.loadData<User | null>(
+    storageKeys.currentUser,
+    null
+  );
+
+  if (currentUser?.id === playerId) {
+    storageService.saveData(storageKeys.currentUser, {
+      ...currentUser,
+      points: Math.max(0, (currentUser.points || 0) + amount),
+    });
+  }
+
+  const userKeys = Array.from(
+    new Set(
+      [storageKeys.users, (storageKeys as any).players].filter(
+        (key): key is string => Boolean(key)
+      )
+    )
+  );
+
+  for (const key of userKeys) {
+    const users = storageService.loadData<User[]>(key, []);
+
+    if (!users.length) continue;
+
+    storageService.saveData(
+      key,
+      users.map(user =>
+        user.id === playerId
+          ? {
+              ...user,
+              points: Math.max(0, (user.points || 0) + amount),
+            }
+          : user
+      )
+    );
+  }
+}
+
+async function fileToDataUrl(file?: File | null) {
+  if (!file) return '';
+
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error);
+
+    reader.readAsDataURL(file);
+  });
 }
 
 export const submissionService = {
   async getSubmissions(): Promise<Submission[]> {
-    const localSubmissions = storageService.loadData<Submission[]>(
-      storageKeys.submissions,
-      []
-    );
-
-    try {
-      const { data, error } = await supabase
-        .from('submissions')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        throw error;
-      }
-
-      const remoteSubmissions = (data || []).map(mapSubmissionRow);
-
-      const merged = mergeSubmissions(localSubmissions, remoteSubmissions);
-
-      storageService.saveData(storageKeys.submissions, merged);
-
-      return merged;
-    } catch (error) {
-      console.warn(
-        'Supabase submissions load failed. Loading local fallback:',
-        error
-      );
-
-      return localSubmissions;
-    }
+    return loadAllLocalSubmissions() as Submission[];
   },
 
-  async getPublicSubmissions(): Promise<Submission[]> {
-    const all = await this.getSubmissions();
+  async createSubmission(params: {
+    playerId: string;
+    challengeId: string;
+    marathonId: string;
+    submissionType?: string;
+    visibility?: 'public' | 'hidden';
+    comment?: string;
+    reflectionText?: string;
+    file?: File | null;
+    socialUrl?: string;
+    tiktokUrl?: string;
+    externalUrl?: string;
+    challengeTitle?: string;
+    playerNickname?: string;
+    playerAvatar?: string;
+  }): Promise<Submission> {
+    const now = new Date().toISOString();
+    const fileUrl = await fileToDataUrl(params.file || null);
 
-    return all.filter(item => item.visibility === 'public');
-  },
+    const url =
+      params.tiktokUrl ||
+      params.socialUrl ||
+      params.externalUrl ||
+      fileUrl ||
+      '';
 
-  async getSubmissionsByPlayer(playerId: string): Promise<Submission[]> {
-    const submissions = await this.getSubmissions();
+    const submission: any = {
+      id: makeLocalSubmissionId(),
 
-    return submissions.filter(submission => submission.playerId === playerId);
-  },
+      playerId: params.playerId,
+      userId: params.playerId,
+      challengeId: params.challengeId,
+      marathonId: params.marathonId,
 
-  async getSubmissionsByChallenge(challengeId: string): Promise<Submission[]> {
-    const submissions = await this.getSubmissions();
+      submissionType: params.submissionType || (url.includes('tiktok') ? 'tiktok' : 'text'),
 
-    return submissions.filter(
-      submission => submission.challengeId === challengeId
-    );
-  },
+      socialPlatform: url.includes('tiktok') ? 'tiktok' : '',
+      socialUrl: url,
+      tiktokUrl: url.includes('tiktok') ? url : '',
+      externalUrl: url,
 
-  async createSubmission(input: CreateSubmissionInput): Promise<Submission> {
-    let fileUrl = '';
-    let filePath = '';
-
-    try {
-      if (
-        input.file &&
-        input.submissionType !== 'reflection' &&
-        input.submissionType !== 'text'
-      ) {
-        const uploaded = await uploadFileToSupabase({
-          playerId: input.playerId,
-          challengeId: input.challengeId,
-          file: input.file,
-        });
-
-        fileUrl = uploaded.fileUrl;
-        filePath = uploaded.filePath;
-      }
-    } catch (error) {
-      console.warn('File upload failed. Saving text/local proof fallback:', error);
-    }
-
-    const submission: Submission = {
-      id: makeId('sub'),
-      playerId: input.playerId,
-      challengeId: input.challengeId,
-      marathonId: input.marathonId,
-      videoUrl: fileUrl,
-      fileUrl,
-      filePath,
-      fileName: input.file?.name,
-      fileMime: input.file?.type,
-      fileSize: input.file?.size,
-      submissionType: input.submissionType,
-      visibility: input.visibility,
-      comment: input.comment || input.reflectionText || '',
-      reflectionText: input.reflectionText || input.comment || '',
+      visibility: params.visibility || 'public',
+      publishToWall: (params.visibility || 'public') === 'public',
+      publish_to_wall: (params.visibility || 'public') === 'public',
+      isPublic: (params.visibility || 'public') === 'public',
       approved: true,
+      status: 'completed',
+
+      playerNickname: params.playerNickname || 'მოთამაშე',
+      playerAvatar: params.playerAvatar || '',
+      challengeTitle: params.challengeTitle || 'გამოწვევა',
+
+      comment: params.comment || '',
+      reflectionText: params.reflectionText || params.comment || '',
+      textDescription: params.reflectionText || params.comment || '',
+
+      fileUrl: fileUrl && !url.includes('tiktok') ? fileUrl : '',
+      videoUrl: fileUrl && !url.includes('tiktok') ? fileUrl : '',
+      localPreviewUrl: fileUrl && !url.includes('tiktok') ? fileUrl : '',
+
+      viewedBy: [],
+      likedBy: [],
+      votedUserIds: [],
+      comments: [],
+
       votes: 0,
       likes: 0,
-      aiReaction:
-        'შესანიშნავია! გამოწვევა წარმატებით აიტვირთა და დაემატა საერთო ონლაინ სივრცეში.',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      safetyFlag: false,
-      votedUserIds: [],
-      likedBy: [],
+      siteViews: 0,
+      siteLikes: 0,
+      siteComments: 0,
+
+      createdAt: now,
+      updatedAt: now,
     };
 
-    saveSubmissionToLocal(submission);
+    const existing = loadAllLocalSubmissions();
+    const next = mergeSubmissions([submission], existing);
 
-    try {
-      const { data, error } = await supabase
-        .from('submissions')
-        .insert(submissionToRow(submission))
-        .select()
-        .single();
+    saveAllLocalSubmissions(next);
 
-      if (error) {
-        throw error;
-      }
-
-      const savedSubmission = mapSubmissionRow(data);
-
-      saveSubmissionToLocal(savedSubmission);
-
-      return savedSubmission;
-    } catch (error) {
-      console.warn(
-        'Supabase submission create failed. Local submission kept:',
-        error
-      );
-
-      return submission;
-    }
+    return submission as Submission;
   },
 
-  async voteSubmission(
-    submissionId: string,
-    voterId: string
-  ): Promise<Submission> {
-    const localSubmissions = storageService.loadData<Submission[]>(
-      storageKeys.submissions,
-      []
-    );
-
-    const existing = localSubmissions.find(item => item.id === submissionId);
-
-    if (existing?.playerId === voterId) {
-      throw new Error('საკუთარ აქტივობაზე ხმის მიცემა არ შეიძლება.');
+  async voteSubmission(submissionId: string, voterId: string): Promise<Submission | null> {
+    if (!submissionId || !voterId) {
+      throw new Error('Missing submission or voter id.');
     }
 
-    if (
-      existing?.likedBy?.includes(voterId) ||
-      existing?.votedUserIds?.includes(voterId)
-    ) {
-      throw new Error('ამ აქტივობაზე ხმა უკვე მიცემული გაქვთ.');
-    }
+    const submissions = loadAllLocalSubmissions();
 
-    try {
-      const { data: current, error: loadError } = await supabase
-        .from('submissions')
-        .select('*')
-        .eq('id', submissionId)
-        .single();
+    let updatedSubmission: any = null;
 
-      if (loadError) {
-        throw loadError;
-      }
+    const updated = submissions.map(submission => {
+      const matches =
+        submission.id === submissionId ||
+        submission.remoteId === submissionId ||
+        submission.remote_id === submissionId;
 
-      const currentSubmission = mapSubmissionRow(current);
+      if (!matches) return submission;
 
-      if (currentSubmission.playerId === voterId) {
-        throw new Error('საკუთარ აქტივობაზე ხმის მიცემა არ შეიძლება.');
-      }
-
-      if (
-        currentSubmission.likedBy?.includes(voterId) ||
-        currentSubmission.votedUserIds?.includes(voterId)
-      ) {
-        throw new Error('ამ აქტივობაზე ხმა უკვე მიცემული გაქვთ.');
+      if (submission.playerId === voterId || submission.userId === voterId) {
+        throw new Error('საკუთარ აქტივობაზე მხარდაჭერა არ შეიძლება.');
       }
 
       const likedBy = Array.from(
-        new Set([...(currentSubmission.likedBy || []), voterId])
+        new Set([
+          ...(submission.likedBy || []),
+          ...(submission.votedUserIds || []),
+        ])
       );
 
-      const votedUserIds = Array.from(
-        new Set([...(currentSubmission.votedUserIds || []), voterId])
-      );
-
-      const nextVotes = votedUserIds.length;
-
-      const { data, error } = await supabase
-        .from('submissions')
-        .update({
-          votes: nextVotes,
-          likes: nextVotes,
-          liked_by: likedBy,
-          voted_user_ids: votedUserIds,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', submissionId)
-        .select()
-        .single();
-
-      if (error) {
-        throw error;
+      if (likedBy.includes(voterId)) {
+        throw new Error('ამ აქტივობაზე მხარდაჭერა უკვე დაფიქსირებულია.');
       }
 
-      const updatedSubmission = mapSubmissionRow(data);
+      const nextLikedBy = [...likedBy, voterId];
 
-      saveSubmissionToLocal(updatedSubmission);
-
-      await awardVotePoints({
-        authorId: updatedSubmission.playerId,
-        voterId,
-        submissionId,
-      });
-
-      return updatedSubmission;
-    } catch (error) {
-      console.warn(
-        'Supabase vote failed. Updating local fallback only:',
-        error
-      );
-
-      if (!existing) {
-        throw new Error('აქტივობა ვერ მოიძებნა.');
-      }
-
-      const likedBy = Array.from(
-        new Set([...(existing.likedBy || []), voterId])
-      );
-
-      const votedUserIds = Array.from(
-        new Set([...(existing.votedUserIds || []), voterId])
-      );
-
-      const updatedSubmission: Submission = {
-        ...existing,
-        likedBy,
-        votedUserIds,
-        votes: votedUserIds.length,
-        likes: votedUserIds.length,
+      updatedSubmission = {
+        ...submission,
+        likedBy: nextLikedBy,
+        votedUserIds: nextLikedBy,
+        votes: nextLikedBy.length,
+        likes: nextLikedBy.length,
+        siteLikes: nextLikedBy.length,
         updatedAt: new Date().toISOString(),
       };
 
-      saveSubmissionToLocal(updatedSubmission);
-
-      await awardVotePoints({
-        authorId: updatedSubmission.playerId,
-        voterId,
-        submissionId,
-      });
-
       return updatedSubmission;
+    });
+
+    if (!updatedSubmission) {
+      throw new Error('Submission not found.');
     }
+
+    saveAllLocalSubmissions(updated);
+
+    updateUserPoints(
+      updatedSubmission.playerId || updatedSubmission.userId,
+      POINTS_CONFIG.voteReceivedBonus
+    );
+
+    updateUserPoints(voterId, POINTS_CONFIG.voterSupportBonus);
+
+    return updatedSubmission as Submission;
   },
 };
