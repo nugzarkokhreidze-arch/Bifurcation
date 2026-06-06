@@ -800,45 +800,42 @@ export default function LandingPage({
 
   return (
     <div className="min-h-screen w-full overflow-x-hidden bg-[#04020d] font-sans text-slate-100">
-      <section className="relative overflow-hidden bg-[#04020d] px-3 pb-12 pt-8 sm:px-6 sm:pb-16 sm:pt-12 md:px-10 lg:pb-24 lg:pt-16">
+      <section className="relative overflow-hidden bg-[#04020d] px-3 pb-12 pt-10 sm:px-6 sm:pb-16 sm:pt-14 md:px-10 lg:pb-24 lg:pt-20">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,#1c1544_0%,#050311_46%,#03010a_100%)]" />
+        <div className="absolute left-[-8%] top-24 h-56 w-56 rounded-full bg-violet-700/20 blur-3xl" />
+        <div className="absolute right-[-10%] top-36 h-64 w-64 rounded-full bg-fuchsia-600/15 blur-3xl" />
+        <div className="absolute bottom-8 left-1/2 h-20 w-[72%] -translate-x-1/2 rounded-full bg-gradient-to-r from-violet-700/10 via-fuchsia-500/10 to-amber-500/10 blur-2xl" />
 
-        <div className="relative z-10 mx-auto max-w-5xl space-y-5 text-left sm:space-y-6">
-          <div className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-violet-500/30 bg-[#120D2F]/75 px-3 py-1.5 text-[11px] font-bold text-violet-300 backdrop-blur-sm sm:px-4 sm:text-xs">
-            <Sparkles className="h-3.5 w-3.5 animate-pulse text-fuchsia-400" />
-            <span>
-              {lang === 'ka'
-                ? 'სივრცითი პროვოკაციული თამაში'
-                : 'Spatial Provocative Game'}
-            </span>
-          </div>
-
-          <h1 className="relative inline-flex max-w-full items-center overflow-visible py-2">
+        <div className="relative z-10 mx-auto max-w-7xl space-y-6 text-center sm:space-y-7">
+          <h1 className="relative mx-auto flex w-full max-w-full items-center justify-center overflow-visible py-3 sm:py-4">
             <span
-              className="relative z-10 whitespace-nowrap bg-gradient-to-r from-violet-500 via-fuchsia-500 to-amber-500 bg-clip-text text-[clamp(2.35rem,10vw,7.25rem)] font-black leading-none tracking-[-0.07em] text-transparent drop-shadow-[0_0_18px_rgba(167,139,250,0.32)]"
+              className="relative z-10 block whitespace-nowrap bg-gradient-to-r from-violet-500 via-fuchsia-500 to-amber-400 bg-clip-text text-center text-[clamp(2.45rem,9.5vw,7.6rem)] font-black leading-[0.92] tracking-[-0.035em] text-transparent drop-shadow-[0_0_22px_rgba(217,70,239,0.34)]"
               style={{
                 fontFamily:
-                  '"Noto Sans Georgian", "BPG Nino Mtavruli", "Arial Rounded MT Bold", system-ui, sans-serif',
-                textShadow: '0 0 34px rgba(168,85,247,0.22)',
+                  'Inter, "Noto Sans Georgian", "Helvetica Neue", Arial, system-ui, sans-serif',
+                fontWeight: 950,
+                WebkitTextStroke: '0.35px rgba(255,255,255,0.08)',
+                textShadow:
+                  '0 0 18px rgba(168,85,247,0.38), 0 0 42px rgba(217,70,239,0.18), 0 12px 34px rgba(0,0,0,0.45)',
               }}
             >
               {lang === 'ka' ? 'ბიფურკაცია' : 'Bifurcation'}
             </span>
 
-            <span className="absolute -bottom-1 left-1 right-1 h-2 rounded-full bg-gradient-to-r from-violet-600/60 via-fuchsia-500/55 to-amber-400/60 blur-md" />
+            <span className="absolute bottom-1 left-1/2 h-2 w-[86%] max-w-5xl -translate-x-1/2 rounded-full bg-gradient-to-r from-violet-600/60 via-fuchsia-500/55 to-amber-400/60 blur-md" />
           </h1>
 
-          <div className="flex items-stretch gap-3 pl-1 sm:gap-4">
+          <div className="mx-auto flex max-w-5xl items-stretch gap-3 text-left sm:gap-4">
             <div className="w-1 shrink-0 rounded-full bg-gradient-to-b from-[#7c3aed] via-[#db2777] to-[#fbbf24] sm:w-1.5" />
 
-            <div className="space-y-2">
-              <h2 className="text-base font-black leading-snug text-white sm:text-xl md:text-2xl">
+            <div className="space-y-2.5">
+              <h2 className="text-base font-black leading-snug text-white sm:text-xl md:text-2xl lg:text-3xl">
                 {lang === 'ka'
                   ? 'ახალი გამოწვევები, სოციალური თამაშები და უფრო თავდაჯერებული შენ.'
                   : 'New challenges, social games, and a more confident you.'}
               </h2>
 
-              <p className="max-w-3xl text-xs font-light leading-6 text-slate-400 sm:text-sm sm:leading-7">
+              <p className="max-w-4xl text-xs font-light leading-6 text-slate-400 sm:text-sm sm:leading-7 md:text-base md:leading-8">
                 {lang === 'ka'
                   ? '„ბიფურკაცია“ არის სივრცითი პროვოკაციული გამოწვევა — სოციალური თამაში, სადაც „არასტანდარტული ქმედებებით“ აგროვებ ქულებს, აზიარებ TikTok-ზე შესრულებულ დავალებებს, იღებ მხარდაჭერას და იბრძვი წოდებისთვის: „მე ვარ საუკეთესო“. ეს არის კოლექტიური თამაში, სადაც ბევრი ადამიანი გეხმარება შენ, და შენც ეხმარები სხვებს — უსაფრთხო, შემოქმედებითი და სახალისო გამოწვევებით დაძლიოთ ბარიერები, შიშები და კომპლექსები.'
                   : 'Bifurcation is a spatial provocative challenge — a social game where you earn points through creative non-standard actions, share TikTok proof, receive support, and compete for the title: I am the best.'}
@@ -846,11 +843,11 @@ export default function LandingPage({
             </div>
           </div>
 
-          <div className="flex w-full flex-col gap-3 pt-2 sm:w-auto sm:flex-row">
+          <div className="flex w-full flex-col justify-center gap-3 pt-2 sm:w-auto sm:flex-row">
             <button
               type="button"
               onClick={handleStartGameClick}
-              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-gradient-to-r from-violet-700 via-fuchsia-600 to-indigo-700 px-5 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-fuchsia-900/20 transition-all hover:scale-[1.02] sm:w-auto sm:px-6"
+              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-gradient-to-r from-violet-700 via-fuchsia-600 to-indigo-700 px-5 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-fuchsia-900/20 transition-all hover:scale-[1.02] sm:w-auto sm:px-8"
             >
               <span>{lang === 'ka' ? 'დაიწყე თამაში' : 'Start the Game'}</span>
               <ArrowRight className="h-4 w-4" />
@@ -859,7 +856,7 @@ export default function LandingPage({
             <button
               type="button"
               onClick={handleViewMarathonsClick}
-              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-full border border-white/10 bg-white/5 px-5 py-3.5 text-sm text-white transition-all hover:bg-white/10 sm:w-auto sm:px-6"
+              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-full border border-white/10 bg-white/5 px-5 py-3.5 text-sm text-white transition-all hover:bg-white/10 sm:w-auto sm:px-8"
             >
               <Play className="h-4 w-4 fill-fuchsia-400 text-fuchsia-400" />
               <span>
