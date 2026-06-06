@@ -611,6 +611,7 @@ export default function App() {
         <LandingPage
           currentUser={currentUser}
           submissions={submissions as any}
+          users={users}
           onStartRegister={() => {
             setTab('profile');
             setAuthMode('register');
